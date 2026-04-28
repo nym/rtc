@@ -256,4 +256,51 @@ describe('reduce', () => {
     });
     expect(s.projects['p1']?.patchArcCenter).toBeCloseTo(-Math.PI / 2, 9);
   });
+
+  test('worker.removed deletes the worker from state.workers', () => {
+    let s = reduceMany(initialWorldState(), [projectUpserted('p1'), workerSpawned('w1')]);
+    s = reduce(s, { kind: 'worker.despawned', t: 9, eventId: 'd1', workerId: 'w1', reason: 'completed' });
+    expect(s.workers['w1']).toBeDefined();
+    s = reduce(s, { kind: 'worker.removed', t: 100, eventId: 'r1', workerId: 'w1' });
+    expect(s.workers['w1']).toBeUndefined();
+    // Removing a dead worker should not change workersAlive (already 0).
+    expect(s.totals.workersAlive).toBe(0);
+    // workersTotal is the lifetime counter — it does not decrement.
+    expect(s.totals.workersTotal).toBe(1);
+  });
+
+  test('worker.removed decrements workersAlive if the worker was still alive', () => {
+    let s = reduceMany(initialWorldState(), [projectUpserted('p1'), workerSpawned('w1')]);
+    expect(s.totals.workersAlive).toBe(1);
+    s = reduce(s, { kind: 'worker.removed', t: 50, eventId: 'r-live', workerId: 'w1' });
+    expect(s.workers['w1']).toBeUndefined();
+    expect(s.totals.workersAlive).toBe(0);
+  });
+
+  test('worker.removed for an unknown workerId is a no-op', () => {
+    const s0 = reduce(initialWorldState(), projectUpserted('p1'));
+    const s1 = reduce(s0, { kind: 'worker.removed', t: 1, eventId: 'r-noop', workerId: 'unknown' });
+    expect(s1).toBe(s0);
+    expect(s1.revision).toBe(s0.revision);
+  });
+
+  test('mcp.server.removed deletes the server from state.mcpServers', () => {
+    let s = initialWorldState();
+    s = reduce(s, {
+      kind: 'mcp.server.upserted', t: 10, eventId: 'mcp-up',
+      server: { id: 'p1:github', name: 'github', projectId: 'p1' },
+    });
+    expect(s.mcpServers['p1:github']).toBeDefined();
+    const revBefore = s.revision;
+    s = reduce(s, { kind: 'mcp.server.removed', t: 20, eventId: 'mcp-rm', serverId: 'p1:github' });
+    expect(s.mcpServers['p1:github']).toBeUndefined();
+    expect(s.revision).toBe(revBefore + 1);
+  });
+
+  test('mcp.server.removed for an unknown serverId is a no-op', () => {
+    const s0 = initialWorldState();
+    const s1 = reduce(s0, { kind: 'mcp.server.removed', t: 1, eventId: 'mcp-rm-noop', serverId: 'unknown' });
+    expect(s1).toBe(s0);
+    expect(s1.revision).toBe(s0.revision);
+  });
 });

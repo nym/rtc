@@ -1,6 +1,6 @@
 export type WorkerSource = 'claude-code' | 'sdk-script';
 export type WorkerActivity = 'idle' | 'thinking' | 'tool_use' | 'mcp_call' | 'streaming';
-export type DespawnReason = 'completed' | 'killed' | 'crashed';
+export type DespawnReason = 'completed' | 'killed' | 'crashed' | 'unresponsive';
 export type NotificationLevel = 'info' | 'warn' | 'error';
 
 export interface EventBase {
@@ -97,9 +97,17 @@ export type DashboardEvent =
       server: McpServerInfo;
     })
   | (EventBase & {
+      kind: 'mcp.server.removed';
+      serverId: string;
+    })
+  | (EventBase & {
       kind: 'worker.despawned';
       workerId: string;
       reason: DespawnReason;
+    })
+  | (EventBase & {
+      kind: 'worker.removed';
+      workerId: string;
     });
 
 export type EventKind = DashboardEvent['kind'];

@@ -18,8 +18,14 @@ export const JSONL_MAX_BACKUPS = 7;
 /** Kill timing. */
 export const KILL_GRACE_MS = 5_000;
 
-/** Worker visual lifetime after despawn. */
+/** A worker or MCP server with no events for this long is considered gone. */
+export const STALE_TTL_MS = 3 * 60 * 1000;
+
+/** A despawned worker is removed from state this long after despawn. */
 export const WORKER_FADE_MS = 5 * 60 * 1000;
+
+/** How often the coordinator sweeps for stale workers / MCP servers. */
+export const SWEEP_INTERVAL_MS = 30 * 1000;
 
 /** Project identity resolution. */
 export const PROJECT_ID_ENV = 'ORCHESTRATOR_PROJECT_ID';

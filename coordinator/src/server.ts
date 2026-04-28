@@ -9,7 +9,7 @@ import {
   type ClientMessage,
   type WorldState,
 } from '@rtc/core';
-import { COORDINATOR_HOST, COORDINATOR_PORT, EVENTS_JSONL } from '@rtc/core/config-node';
+import { COORDINATOR_HOST, COORDINATOR_PORT, EVENTS_JSONL, STALE_TTL_MS, SWEEP_INTERVAL_MS, WORKER_FADE_MS } from '@rtc/core/config-node';
 import { JsonlLog } from './jsonl.js';
 import { PidRegistry } from './pid-registry.js';
 import { makeKillExecutor, type KillExecutorOpts } from './kill.js';
@@ -21,6 +21,14 @@ export interface CoordinatorOpts {
   killOpts?: KillExecutorOpts;
   /** Skip JSONL persistence + replay. Used in tests. */
   ephemeral?: boolean;
+  /** Override how often the staleness sweeper runs (ms). Set to 0 to disable. Default: SWEEP_INTERVAL_MS. */
+  sweepIntervalMs?: number;
+  /** Override the staleness threshold (ms). Default: STALE_TTL_MS. */
+  staleTtlMs?: number;
+  /** Override the dead-worker removal threshold (ms after despawn). Default: WORKER_FADE_MS. */
+  fadeMs?: number;
+  /** Override the time source (used in tests). Default: Date.now. */
+  now?: () => number;
 }
 
 export interface CoordinatorHandle {
@@ -28,6 +36,8 @@ export interface CoordinatorHandle {
   port: number;
   state: () => WorldState;
   ingestEvent: (e: DashboardEvent) => Promise<void>;
+  /** Run the staleness sweep once. Exposed for testing — production calls happen on a timer. */
+  sweepStale: () => Promise<void>;
   close: () => Promise<void>;
 }
 
@@ -118,6 +128,52 @@ export async function startCoordinator(opts: CoordinatorOpts = {}): Promise<Coor
     broadcast({ type: 'event', event: e });
   }
 
+  // Periodic staleness sweep: workers / MCP servers that haven't been seen in
+  // a while are gone, since Claude Code has no liveness signal we can trust.
+  const sweepIntervalMs = opts.sweepIntervalMs ?? SWEEP_INTERVAL_MS;
+  const staleTtlMs = opts.staleTtlMs ?? STALE_TTL_MS;
+  const fadeMs = opts.fadeMs ?? WORKER_FADE_MS;
+  const now = opts.now ?? (() => Date.now());
+  let sweepCounter = 0;
+  async function sweepStale(): Promise<void> {
+    const t = now();
+    const toEmit: DashboardEvent[] = [];
+    for (const w of Object.values(state.workers)) {
+      if (w.alive && t - w.lastEventAt > staleTtlMs) {
+        toEmit.push({
+          kind: 'worker.despawned',
+          t, eventId: `sweep-despawn-${w.id}-${++sweepCounter}`,
+          workerId: w.id, reason: 'unresponsive',
+        });
+      } else if (!w.alive && w.despawnedAt !== undefined && t - w.despawnedAt > fadeMs) {
+        toEmit.push({
+          kind: 'worker.removed',
+          t, eventId: `sweep-remove-${w.id}-${++sweepCounter}`,
+          workerId: w.id,
+        });
+      }
+    }
+    for (const s of Object.values(state.mcpServers)) {
+      if (t - s.lastSeen > staleTtlMs) {
+        toEmit.push({
+          kind: 'mcp.server.removed',
+          t, eventId: `sweep-mcp-${s.id}-${++sweepCounter}`,
+          serverId: s.id,
+        });
+      }
+    }
+    for (const e of toEmit) await ingest(e);
+  }
+
+  let sweepTimer: ReturnType<typeof setInterval> | null = null;
+  if (sweepIntervalMs > 0) {
+    sweepTimer = setInterval(() => {
+      void sweepStale().catch(() => { /* swallow — sweeper must not crash the server */ });
+    }, sweepIntervalMs);
+    // Don't keep the process alive just for the sweeper.
+    if (typeof sweepTimer.unref === 'function') sweepTimer.unref();
+  }
+
   function broadcast(msg: ServerMessage) {
     const data = JSON.stringify(msg);
     for (const c of clients) {
@@ -142,7 +198,9 @@ export async function startCoordinator(opts: CoordinatorOpts = {}): Promise<Coor
     port: boundPort,
     state: () => state,
     ingestEvent: ingest,
+    sweepStale,
     async close() {
+      if (sweepTimer) clearInterval(sweepTimer);
       for (const c of clients) {
         try { c.close(); } catch { /* ignore */ }
       }

@@ -223,6 +223,31 @@ export function reduce(state: WorldState, event: DashboardEvent): WorldState {
         revision: state.revision + 1,
       };
     }
+
+    case 'mcp.server.removed': {
+      if (!state.mcpServers[event.serverId]) return state;
+      const { [event.serverId]: _gone, ...rest } = state.mcpServers;
+      return {
+        ...state,
+        mcpServers: rest,
+        revision: state.revision + 1,
+      };
+    }
+
+    case 'worker.removed': {
+      const w = state.workers[event.workerId];
+      if (!w) return state;
+      const { [event.workerId]: _gone, ...rest } = state.workers;
+      const totals = cloneTotals(state);
+      // If we somehow remove a still-alive worker, decrement workersAlive too.
+      if (w.alive) totals.workersAlive = Math.max(0, totals.workersAlive - 1);
+      return {
+        ...state,
+        workers: rest,
+        totals,
+        revision: state.revision + 1,
+      };
+    }
   }
 }
 
