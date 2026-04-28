@@ -3,6 +3,7 @@
 > Status: **Locked. Gap-filled. Testable. Documented. Loop-verifiable.** Companion docs: `README.md` (user-authored, see Appendix F), `ASSETS.md` (artist-facing voxel modelling guide).
 
 ## Changelog
+- **v1.4** — Patch placement constrained to the camera-facing 180° arc (angles in `[-π/4, 3π/4]` from base) so no patch sits behind the base out of view; patch radius increased to **5.5** world units. Worker visual switched to MagicaVoxel `MobileStorageBot.obj` (with `.mtl`/`.png` palette) loaded via `OBJLoader`/`MTLLoader` from `dashboard/public/assets/`; placeholder geometry is the fallback when the asset is missing. Project base composited as a multi-tier "space factory" (~3 × 3.5 × 3 world units) with glowing windows.
 - **v1.3** — Mineral-haul VFX promoted from roadmap to MVP. After a successful harvest cycle (worker `activity` transitions out of `tool_use`), the worker carries a glowing voxel back to its base; on arrival within ≈1 world unit the carry is released. Worker hit-targets expose `data-carrying="true|false"` for assertions. Gate G6 extended with required spec `harvest-haul.spec.ts`.
 - **v1.2** — Mineral patches per worker. Each project's alive workers are paired 1:1 with mineral patches fanned in a uniform ring around the project base; worker `patchPosition` resolves to its assigned patch. Required `data-testid` `mineral-patch-{label}` added to D.11. Gate G6 extended with a new required spec `mineral-patches.spec.ts` asserting N alive workers ↔ N distinct patch positions.
 - **v1.1** — README authorship clarified: user provides `README.md`, agent does not author it. Gate G8 updated to check `## Project goals` and `## Quick start` headings, no unfilled markers, ≥80 lines, demo reference. Appendix F.2 rewritten as "agent must not rewrite the user's README." Halt-and-report condition for missing/unfit README replaces the original-prompt condition.
@@ -371,13 +372,15 @@ React SPA with two cooperating layers.
 4. Restarting dashboard rebuilds state from snapshot.
 5. Restarting coordinator rebuilds state and PID registry from JSONL.
 
-**Mineral patch distribution (v1.2):** every alive worker in a project owns one
-mineral patch. Patches are placed deterministically in a uniform ring around the
-project base — for `N` alive workers in project `P`, sort their `workerId`s
-ascending, then place patch `i` at `(basePos + (cos θ_i, 0, sin θ_i) * r)` where
-`θ_i = 2π * i / N` and `r ≈ 3.5` world units. Worker `i`'s `patchPosition` resolves
-to patch `i`. When a worker despawns the slot is freed and remaining workers
-re-pack into the new uniform ring on the next render frame.
+**Mineral patch distribution (v1.4):** every alive worker in a project owns one
+mineral patch. Patches are placed deterministically in a fanned arc on the
+camera-facing side of the project base — for `N` alive workers in project `P`,
+sort their `workerId`s ascending, then place patch `i` at
+`(basePos + (cos θ_i, 0, sin θ_i) * r)` where
+`θ_i = -π/4 + π * (i + 0.5) / N` (a 180° arc centered on the camera azimuth)
+and `r ≈ 5.5` world units. Patches must never sit on the back/occluded half
+of the base. Worker `i`'s `patchPosition` resolves to patch `i`. When a worker
+despawns the slot is freed and remaining workers re-pack on the next render frame.
 
 **Out of MVP:** mineral-haul VFX, base placement UI, build queues, tech tree, "enemy" mechanics, live Claude Code token tracking, subprocess cancellation, camera controls, minimap, character variety beyond one worker model.
 

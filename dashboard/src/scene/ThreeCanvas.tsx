@@ -15,21 +15,32 @@ export function ThreeCanvas({ onSelectWorker }: Props) {
 
   useEffect(() => {
     if (!hostRef.current) return;
-    const app = createThreeApp(hostRef.current);
-    appRef.current = app;
-    app.setOnFrame(({ workers: w, patches: p }) => {
-      setWorkers(w);
-      setPatches(p);
-    });
+    let cancelled = false;
+    let ro: ResizeObserver | null = null;
 
-    const ro = new ResizeObserver(() => {
-      const el = hostRef.current!;
-      app.resize(el.clientWidth || 1, el.clientHeight || 1);
-    });
-    ro.observe(hostRef.current);
+    (async () => {
+      const app = await createThreeApp(hostRef.current!);
+      if (cancelled) { app.dispose(); return; }
+      appRef.current = app;
+      app.setOnFrame(({ workers: w, patches: p }) => {
+        setWorkers(w);
+        setPatches(p);
+      });
+      // Apply current world state immediately so workers/patches appear without
+      // waiting for the next reducer change.
+      app.syncFromState(useStore.getState().world);
+
+      ro = new ResizeObserver(() => {
+        const el = hostRef.current!;
+        app.resize(el.clientWidth || 1, el.clientHeight || 1);
+      });
+      ro.observe(hostRef.current!);
+    })();
+
     return () => {
-      ro.disconnect();
-      app.dispose();
+      cancelled = true;
+      ro?.disconnect();
+      appRef.current?.dispose();
       appRef.current = null;
     };
   }, []);
