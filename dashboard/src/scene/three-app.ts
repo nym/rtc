@@ -96,10 +96,22 @@ export async function createThreeApp(host: HTMLDivElement): Promise<ThreeApp> {
   scene.fog = new THREE.Fog('#050a14', 28, 70);
 
   let zoomExtent = ZOOM_EXTENT_DEFAULT;
+  const camTarget = new THREE.Vector3(0, 0.5, 0);
   const cam = new THREE.OrthographicCamera(-14, 14, 14, -14, 0.1, 200);
   applyFrustum(cam, host.clientWidth || 1, host.clientHeight || 1, zoomExtent);
-  positionIsoCamera(cam, 36);
+  positionIsoCamera(cam, 36, camTarget);
   cam.updateProjectionMatrix();
+
+  // WASD camera pan: track held keys, integrate camTarget per frame.
+  const keysHeld = new Set<string>();
+  const onKeyDown = (ev: KeyboardEvent) => {
+    if (['w', 'a', 's', 'd'].includes(ev.key.toLowerCase())) keysHeld.add(ev.key.toLowerCase());
+  };
+  const onKeyUp = (ev: KeyboardEvent) => {
+    keysHeld.delete(ev.key.toLowerCase());
+  };
+  window.addEventListener('keydown', onKeyDown);
+  window.addEventListener('keyup', onKeyUp);
 
   const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
@@ -146,11 +158,32 @@ export async function createThreeApp(host: HTMLDivElement): Promise<ThreeApp> {
 
   let lastTime = performance.now();
   let raf = 0;
+  const _camForward = new THREE.Vector3();
+  const _camRight = new THREE.Vector3();
+  const PAN_SPEED = 14; // world units per second
   const animate = () => {
     raf = requestAnimationFrame(animate);
     const now = performance.now();
     const dt = Math.min(0.05, (now - lastTime) / 1000);
     lastTime = now;
+
+    if (keysHeld.size > 0) {
+      cam.getWorldDirection(_camForward);
+      _camForward.y = 0;
+      _camForward.normalize();
+      _camRight.set(_camForward.z, 0, -_camForward.x);
+      const step = PAN_SPEED * dt;
+      let dx = 0, dz = 0;
+      if (keysHeld.has('w')) dz += step;
+      if (keysHeld.has('s')) dz -= step;
+      if (keysHeld.has('d')) dx += step;
+      if (keysHeld.has('a')) dx -= step;
+      if (dx !== 0 || dz !== 0) {
+        camTarget.addScaledVector(_camRight, dx);
+        camTarget.addScaledVector(_camForward, dz);
+        positionIsoCamera(cam, 36, camTarget);
+      }
+    }
 
     const workers: WorkerProjection[] = [];
     for (const entry of workerEntries.values()) {
@@ -256,6 +289,7 @@ export async function createThreeApp(host: HTMLDivElement): Promise<ThreeApp> {
       }
       entry.label = worker.label ?? worker.id;
       entry.alive = worker.alive;
+      entry.errorCount = worker.errorCount;
       // Resolve which MCP server (if any) this worker targets when in mcp_call.
       // Pick deterministically by hashing workerId across the project's servers so
       // multi-server projects spread traffic visibly.
@@ -266,6 +300,18 @@ export async function createThreeApp(host: HTMLDivElement): Promise<ThreeApp> {
         if (server) entry.mcpTargetPosition = server.position;
       } else {
         entry.mcpTargetPosition = undefined;
+      }
+      // Compute an idle loiter spot just outside the project's base so workers with
+      // nothing to do don't pile up on top of the base or sit on a patch.
+      const baseMesh = baseMeshes.get(worker.projectId);
+      if (baseMesh) {
+        const idleAngle = (hashInt(worker.id) % 1024) / 1024 * Math.PI * 2;
+        const idleR = 3.4;
+        entry.idlePosition.set(
+          baseMesh.position.x + Math.cos(idleAngle) * idleR,
+          0,
+          baseMesh.position.z + Math.sin(idleAngle) * idleR,
+        );
       }
       // Carrying flips when the worker leaves an active harvest pose (tool_use or
       // mcp_call) while close enough to the corresponding target.
@@ -282,6 +328,7 @@ export async function createThreeApp(host: HTMLDivElement): Promise<ThreeApp> {
       }
       entry.activity = worker.activity;
       entry.basePosition = baseMeshes.get(worker.projectId)?.position ?? entry.basePosition;
+      applyStatusTint(entry);
     }
     for (const [id, entry] of workerEntries) {
       if (!seenWorkers.has(id)) {
@@ -350,6 +397,8 @@ export async function createThreeApp(host: HTMLDivElement): Promise<ThreeApp> {
   function dispose() {
     cancelAnimationFrame(raf);
     renderer.domElement.removeEventListener('wheel', onWheel);
+    window.removeEventListener('keydown', onKeyDown);
+    window.removeEventListener('keyup', onKeyUp);
     renderer.dispose();
     if (renderer.domElement.parentElement) {
       renderer.domElement.parentElement.removeChild(renderer.domElement);
@@ -386,13 +435,13 @@ function applyFrustum(cam: THREE.OrthographicCamera, w: number, h: number, exten
   cam.updateProjectionMatrix();
 }
 
-function positionIsoCamera(cam: THREE.OrthographicCamera, distance: number): void {
+function positionIsoCamera(cam: THREE.OrthographicCamera, distance: number, target: THREE.Vector3): void {
   const { azimuth, elevation } = ISO_CAMERA_ANGLE;
   const x = Math.cos(elevation) * Math.cos(azimuth) * distance;
   const y = Math.sin(elevation) * distance;
   const z = Math.cos(elevation) * Math.sin(azimuth) * distance;
-  cam.position.set(x, y, z);
-  cam.lookAt(0, 0.5, 0);
+  cam.position.set(target.x + x, target.y + y, target.z + z);
+  cam.lookAt(target.x, target.y, target.z);
 }
 
 interface WorkerEntry {
@@ -400,6 +449,7 @@ interface WorkerEntry {
   label: string;
   alive: boolean;
   activity: 'idle' | 'thinking' | 'tool_use' | 'mcp_call' | 'streaming';
+  errorCount: number;
   group: THREE.Group;
   body: THREE.Mesh | THREE.Object3D;
   carry: THREE.Mesh;
@@ -407,8 +457,11 @@ interface WorkerEntry {
   basePosition: THREE.Vector3 | undefined;
   patchPosition: THREE.Vector3;
   mcpTargetPosition: THREE.Vector3 | undefined;
+  /** Where this worker loiters when idle and not carrying — outside the base, deterministic. */
+  idlePosition: THREE.Vector3;
   phase: number;
   usingTemplate: boolean;
+  lastTintColor: number;
 }
 
 function createWorkerEntry(
@@ -470,6 +523,7 @@ function createWorkerEntry(
     label,
     alive: true,
     activity: 'idle',
+    errorCount: 0,
     group,
     body,
     carry,
@@ -477,8 +531,10 @@ function createWorkerEntry(
     basePosition: base?.position,
     patchPosition: new THREE.Vector3(PATCH_RADIUS, 0, 0),
     mcpTargetPosition: undefined,
+    idlePosition: new THREE.Vector3(seedPos.x, 0, seedPos.z),
     phase: hashFloat(workerId),
     usingTemplate,
+    lastTintColor: -1,
   };
 }
 
@@ -532,7 +588,39 @@ function stepWorker(entry: WorkerEntry, _dt: number, now: number): void {
 function pickTarget(entry: WorkerEntry): THREE.Vector3 {
   if (entry.carrying && entry.basePosition) return entry.basePosition;
   if (entry.activity === 'mcp_call' && entry.mcpTargetPosition) return entry.mcpTargetPosition;
+  if (entry.activity === 'idle') return entry.idlePosition;
   return entry.patchPosition;
+}
+
+const STATUS_GREEN = 0x34d399;
+const STATUS_YELLOW = 0xfbbf24;
+const STATUS_RED = 0xef4444;
+
+function statusColorFor(activity: WorkerEntry['activity'], alive: boolean, errorCount: number): number {
+  if (!alive) return STATUS_RED;
+  if (activity === 'tool_use' || activity === 'mcp_call') return STATUS_GREEN;
+  if (activity === 'thinking' || activity === 'streaming' || errorCount > 0) return STATUS_YELLOW;
+  return STATUS_RED;
+}
+
+function applyStatusTint(entry: WorkerEntry): void {
+  const color = statusColorFor(entry.activity, entry.alive, entry.errorCount);
+  if (entry.lastTintColor === color) return;
+  entry.lastTintColor = color;
+  entry.body.traverse((child) => {
+    const mesh = child as THREE.Mesh;
+    if (!mesh.isMesh) return;
+    const mat = mesh.material;
+    if (Array.isArray(mat)) mat.forEach((m) => setEmissive(m, color));
+    else if (mat) setEmissive(mat, color);
+  });
+}
+
+function setEmissive(material: THREE.Material, color: number): void {
+  const m = material as THREE.MeshStandardMaterial;
+  if (!m.emissive) return;
+  m.emissive.setHex(color);
+  m.emissiveIntensity = 0.55;
 }
 
 function createMcpServer(): THREE.Group {
