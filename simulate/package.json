@@ -1,0 +1,36 @@
+{
+  "name": "@rtc/simulate",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" },
+    "./simulator-core": { "types": "./dist/simulator-core.d.ts", "import": "./dist/simulator-core.js" },
+    "./transport": { "types": "./dist/transport.d.ts", "import": "./dist/transport.js" },
+    "./scenarios/llminerals": {
+      "types": "./dist/scenarios/llminerals.d.ts",
+      "import": "./dist/scenarios/llminerals.js"
+    },
+    "./scenarios/error-storm": {
+      "types": "./dist/scenarios/error-storm.d.ts",
+      "import": "./dist/scenarios/error-storm.js"
+    },
+    "./scenarios/kill-flow": {
+      "types": "./dist/scenarios/kill-flow.d.ts",
+      "import": "./dist/scenarios/kill-flow.js"
+    },
+    "./scenarios/happy-path": {
+      "types": "./dist/scenarios/happy-path.d.ts",
+      "import": "./dist/scenarios/happy-path.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@rtc/core": "workspace:*",
+    "@rtc/coordinator": "workspace:*"
+  }
+}

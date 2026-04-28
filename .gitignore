@@ -1,0 +1,25 @@
+node_modules/
+dist/
+build/
+.tsbuildinfo
+*.tsbuildinfo
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/
+
+# Logs
+*.log
+
+# Tests / Playwright
+test-results/
+playwright-report/
+demos/tests/**
+!demos/tests/.gitkeep
+
+# Ralph loop
+.ralph/
+
+# Local state during dev
+*.tmp

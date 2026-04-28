@@ -1,0 +1,4 @@
+{"type":"summary","summary":"hi","leafUuid":"x"}
+{"type":"user","message":{"role":"user","content":"hello"}}
+{"type":"assistant","message":{"id":"msg_1","role":"assistant","model":"claude-sonnet-4-6","content":[],"usage":{"input_tokens":100,"output_tokens":50,"cache_creation_input_tokens":0,"cache_read_input_tokens":0}},"uuid":"u1","timestamp":"t"}
+{"type":"assistant","message":{"id":"msg_2","role":"assistant","model":"claude-sonnet-4-6","content":[],"usage":{"input_tokens":200,"output_tokens":75,"cache_creation_input_tokens":10,"cache_read_input_tokens":20}},"uuid":"u2","timestamp":"t"}

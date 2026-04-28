@@ -1,0 +1,63 @@
+import type { WorkerActivity, WorkerSource } from './events.js';
+
+export interface Project {
+  id: string;
+  name: string;
+  cwd?: string;
+  color?: string;
+  createdAt: number;
+}
+
+export interface Worker {
+  id: string;
+  projectId: string;
+  source: WorkerSource;
+  pid?: number;
+  hostname?: string;
+  label?: string;
+  spawnedAt: number;
+  lastEventAt: number;
+  alive: boolean;
+  activity: WorkerActivity;
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+  usd: number;
+  tasksCompleted: number;
+  errorCount: number;
+  lastError?: string;
+  /** When alive=false flipped to despawned. */
+  despawnedAt?: number;
+}
+
+export interface Totals {
+  inputTokens: number;
+  outputTokens: number;
+  usd: number;
+  tasksCompleted: number;
+  workersAlive: number;
+  workersTotal: number;
+}
+
+export interface WorldState {
+  projects: Record<string, Project>;
+  workers: Record<string, Worker>;
+  totals: Totals;
+  /** Monotonic — bumped on any state mutation. */
+  revision: number;
+}
+
+export const initialWorldState = (): WorldState => ({
+  projects: {},
+  workers: {},
+  totals: {
+    inputTokens: 0,
+    outputTokens: 0,
+    usd: 0,
+    tasksCompleted: 0,
+    workersAlive: 0,
+    workersTotal: 0,
+  },
+  revision: 0,
+});

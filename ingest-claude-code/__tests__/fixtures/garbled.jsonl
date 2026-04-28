@@ -1,0 +1,6 @@
+not even json
+{"type":"unknown","weird":"line"}
+{"type":"assistant","message":{"model":"claude-sonnet-4-6","usage":{"input_tokens":42,"output_tokens":7}}}
+{"type":"assistant","message":{"id":"missing-usage","model":"claude-sonnet-4-6"}}
+
+{"type":"assistant"}

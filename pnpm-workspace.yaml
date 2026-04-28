@@ -1,0 +1,7 @@
+packages:
+  - 'core'
+  - 'coordinator'
+  - 'ingest-claude-code'
+  - 'ingest-sdk'
+  - 'simulate'
+  - 'dashboard'

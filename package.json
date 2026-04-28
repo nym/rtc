@@ -1,0 +1,33 @@
+{
+  "name": "rtc",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Real Time Conductor — localhost observability dashboard for parallel Claude / Anthropic agent jobs.",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "packageManager": "pnpm@10.33.2",
+  "scripts": {
+    "build": "pnpm -r build",
+    "dev:coordinator": "pnpm --filter @rtc/coordinator dev",
+    "dev:dashboard": "pnpm --filter @rtc/dashboard dev",
+    "dev": "concurrently -k -n coord,dash -c blue,magenta \"pnpm dev:coordinator\" \"pnpm dev:dashboard\"",
+    "simulate": "tsx simulate/src/index.ts",
+    "simulate:demo": "tsx simulate/src/index.ts llminerals --duration 60",
+    "test": "vitest run",
+    "test:e2e": "playwright test --project=e2e --config dashboard/e2e/playwright.config.ts",
+    "test:e2e:ui": "playwright test --project=e2e --ui --config dashboard/e2e/playwright.config.ts",
+    "test:all": "pnpm test && pnpm test:e2e",
+    "demo:record": "playwright test --project=demo-recording --config dashboard/e2e/playwright.config.ts && tsx scripts/finalize-demo-video.ts",
+    "demo:open": "open demos/llminerals.mp4 || xdg-open demos/llminerals.mp4"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.49.1",
+    "@types/node": "20.14.10",
+    "concurrently": "9.1.0",
+    "tsx": "4.19.2",
+    "typescript": "5.6.3",
+    "vitest": "2.1.8"
+  }
+}

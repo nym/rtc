@@ -1,0 +1,18 @@
+{
+  "name": "@rtc/ingest-claude-code",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" },
+    "./transcript": { "types": "./dist/transcript.d.ts", "import": "./dist/transcript.js" }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@rtc/core": "workspace:*"
+  }
+}
