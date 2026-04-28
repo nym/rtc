@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useStore } from '../store.js';
-import { createThreeApp, type WorkerProjection, type ThreeApp } from './three-app.js';
+import { createThreeApp, type WorkerProjection, type PatchProjection, type ThreeApp } from './three-app.js';
 
 interface Props {
   onSelectWorker: (workerId: string) => void;
@@ -9,14 +9,18 @@ interface Props {
 export function ThreeCanvas({ onSelectWorker }: Props) {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const appRef = useRef<ThreeApp | null>(null);
-  const [projections, setProjections] = useState<WorkerProjection[]>([]);
+  const [workers, setWorkers] = useState<WorkerProjection[]>([]);
+  const [patches, setPatches] = useState<PatchProjection[]>([]);
   const world = useStore((s) => s.world);
 
   useEffect(() => {
     if (!hostRef.current) return;
     const app = createThreeApp(hostRef.current);
     appRef.current = app;
-    app.setOnFrame((p) => setProjections(p));
+    app.setOnFrame(({ workers: w, patches: p }) => {
+      setWorkers(w);
+      setPatches(p);
+    });
 
     const ro = new ResizeObserver(() => {
       const el = hostRef.current!;
@@ -36,7 +40,17 @@ export function ThreeCanvas({ onSelectWorker }: Props) {
 
   return (
     <div ref={hostRef} style={{ position: 'absolute', inset: 0 }}>
-      {projections.map((p) => (
+      {patches.map((p) => (
+        <div
+          key={`patch-${p.workerId}`}
+          className="mineral-patch-marker"
+          data-testid={`mineral-patch-${p.label}`}
+          style={{ left: `${p.screenX}px`, top: `${p.screenY}px` }}
+        >
+          ◆
+        </div>
+      ))}
+      {workers.map((p) => (
         <button
           key={p.workerId}
           type="button"

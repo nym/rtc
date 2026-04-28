@@ -3,6 +3,7 @@
 > Status: **Locked. Gap-filled. Testable. Documented. Loop-verifiable.** Companion docs: `README.md` (user-authored, see Appendix F), `ASSETS.md` (artist-facing voxel modelling guide).
 
 ## Changelog
+- **v1.2** — Mineral patches per worker. Each project's alive workers are paired 1:1 with mineral patches fanned in a uniform ring around the project base; worker `patchPosition` resolves to its assigned patch. Required `data-testid` `mineral-patch-{label}` added to D.11. Gate G6 extended with a new required spec `mineral-patches.spec.ts` asserting N alive workers ↔ N distinct patch positions.
 - **v1.1** — README authorship clarified: user provides `README.md`, agent does not author it. Gate G8 updated to check `## Project goals` and `## Quick start` headings, no unfilled markers, ≥80 lines, demo reference. Appendix F.2 rewritten as "agent must not rewrite the user's README." Halt-and-report condition for missing/unfit README replaces the original-prompt condition.
 - **v1.0** — Added Appendix G (completion gates): 10 machine-verifiable gates for the Ralph Wiggum loop, each a single shell command with explicit pass conditions; 120-minute total budget, 8 attempts per gate (G10 capped at 2), 10-minute per-attempt timeout, `.ralph/` logging contract, halt-and-report list. Replaced loose pass criteria in §8 and ONESHOT_PROMPT.md with a pointer to Appendix G.
 - **v0.9** — Added Appendix E (video demo capture): Playwright `record-video` always-on, output to `demos/`, dedicated `demo-recording` project that produces a shareable MP4 of the Llminerals scenario. Added Appendix F (README contract): the README the agent must write at the repo root, including the original product brief and step-by-step usage instructions.
@@ -369,7 +370,15 @@ React SPA with two cooperating layers.
 4. Restarting dashboard rebuilds state from snapshot.
 5. Restarting coordinator rebuilds state and PID registry from JSONL.
 
-**Out of MVP:** mineral-haul VFX, multiple patches per base, base placement UI, build queues, tech tree, "enemy" mechanics, live Claude Code token tracking, subprocess cancellation, camera controls, minimap, character variety beyond one worker model.
+**Mineral patch distribution (v1.2):** every alive worker in a project owns one
+mineral patch. Patches are placed deterministically in a uniform ring around the
+project base — for `N` alive workers in project `P`, sort their `workerId`s
+ascending, then place patch `i` at `(basePos + (cos θ_i, 0, sin θ_i) * r)` where
+`θ_i = 2π * i / N` and `r ≈ 3.5` world units. Worker `i`'s `patchPosition` resolves
+to patch `i`. When a worker despawns the slot is freed and remaining workers
+re-pack into the new uniform ring on the next render frame.
+
+**Out of MVP:** mineral-haul VFX, base placement UI, build queues, tech tree, "enemy" mechanics, live Claude Code token tracking, subprocess cancellation, camera controls, minimap, character variety beyond one worker model.
 
 ---
 
@@ -1314,6 +1323,7 @@ For Playwright stability, the dashboard must expose these test ids. Add to the s
 | Top-bar total USD | `total-usd` |
 | Connection status badge | `connection-status` |
 | Worker hit-target (canvas overlay) | `worker-{label}` |
+| Mineral patch hit-target (canvas overlay) | `mineral-patch-{label}` |
 | Project name display | `project-name-{projectId}` |
 | Error toast item | `error-toast-{eventId}` |
 | Kill button in popover | `kill-button` |
@@ -1960,6 +1970,7 @@ pnpm test:e2e
 | `kill-flow.spec.ts` | Kill confirm → despawn → workers-alive decrements |
 | `error-toast.spec.ts` | `worker.errored` produces visible toast, dismissible |
 | `reconnect.spec.ts` | Forced disconnect + reconnect resyncs from snapshot |
+| `mineral-patches.spec.ts` | N alive workers ↔ N `mineral-patch-{label}` hit-targets at distinct screen positions; on despawn, count decrements |
 
 Per-test webm videos exist under `demos/tests/` after this gate runs.
 

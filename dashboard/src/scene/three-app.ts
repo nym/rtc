@@ -9,10 +9,22 @@ export interface WorkerProjection {
   screenY: number;
 }
 
+export interface PatchProjection {
+  workerId: string;
+  label: string;
+  screenX: number;
+  screenY: number;
+}
+
+export interface FrameSnapshot {
+  workers: WorkerProjection[];
+  patches: PatchProjection[];
+}
+
 export interface ThreeApp {
   dispose: () => void;
   resize: (w: number, h: number) => void;
-  setOnFrame: (cb: (workers: WorkerProjection[]) => void) => void;
+  setOnFrame: (cb: (snap: FrameSnapshot) => void) => void;
   syncFromState: (state: WorldState) => void;
 }
 
@@ -55,14 +67,8 @@ export function createThreeApp(host: HTMLDivElement): ThreeApp {
   grid.position.y = 0.01;
   scene.add(grid);
 
-  // Mineral patch (single, central — placeholder)
-  const patch = new THREE.Mesh(
-    new THREE.BoxGeometry(1.2, 0.8, 1.2),
-    new THREE.MeshStandardMaterial({ color: '#7e57c2', emissive: '#311b92', emissiveIntensity: 0.45 })
-  );
-  patch.position.set(4.5, 0.4, 0);
-  scene.add(patch);
-
+  const patchGroup = new THREE.Group();
+  scene.add(patchGroup);
   const baseGroup = new THREE.Group();
   scene.add(baseGroup);
   const unitsGroup = new THREE.Group();
@@ -70,9 +76,11 @@ export function createThreeApp(host: HTMLDivElement): ThreeApp {
 
   const baseMeshes = new Map<string, THREE.Mesh>();
   const workerEntries = new Map<string, WorkerEntry>();
+  /** workerId → patch mesh (one mineral patch per alive worker, fanned around its base) */
+  const patchMeshes = new Map<string, { mesh: THREE.Mesh; label: string }>();
 
   const projectionVec = new THREE.Vector3();
-  let onFrame: ((workers: WorkerProjection[]) => void) | null = null;
+  let onFrame: ((snap: FrameSnapshot) => void) | null = null;
 
   let lastTime = performance.now();
   let raf = 0;
@@ -82,16 +90,15 @@ export function createThreeApp(host: HTMLDivElement): ThreeApp {
     const dt = Math.min(0.05, (now - lastTime) / 1000);
     lastTime = now;
 
-    const projections: WorkerProjection[] = [];
+    const workers: WorkerProjection[] = [];
     for (const entry of workerEntries.values()) {
       stepWorker(entry, dt, now);
-      // Project world position to screen coords for hit-target overlay.
       projectionVec.copy(entry.group.position);
       projectionVec.y += 1.0;
       projectionVec.project(cam);
       const sx = (projectionVec.x * 0.5 + 0.5) * renderer.domElement.clientWidth;
       const sy = (-projectionVec.y * 0.5 + 0.5) * renderer.domElement.clientHeight;
-      projections.push({
+      workers.push({
         workerId: entry.workerId,
         label: entry.label,
         alive: entry.alive,
@@ -100,7 +107,17 @@ export function createThreeApp(host: HTMLDivElement): ThreeApp {
       });
     }
 
-    if (onFrame) onFrame(projections);
+    const patches: PatchProjection[] = [];
+    for (const [workerId, entry] of patchMeshes) {
+      projectionVec.copy(entry.mesh.position);
+      projectionVec.y += 0.4;
+      projectionVec.project(cam);
+      const sx = (projectionVec.x * 0.5 + 0.5) * renderer.domElement.clientWidth;
+      const sy = (-projectionVec.y * 0.5 + 0.5) * renderer.domElement.clientHeight;
+      patches.push({ workerId, label: entry.label, screenX: sx, screenY: sy });
+    }
+
+    if (onFrame) onFrame({ workers, patches });
     renderer.render(scene, cam);
   };
   animate();
@@ -150,6 +167,51 @@ export function createThreeApp(host: HTMLDivElement): ThreeApp {
       if (!seenWorkers.has(id)) {
         unitsGroup.remove(entry.group);
         workerEntries.delete(id);
+      }
+    }
+
+    // Mineral patches: 1:1 with alive workers per project, uniform ring around base.
+    const aliveByProject = new Map<string, string[]>();
+    for (const w of Object.values(state.workers)) {
+      if (!w.alive) continue;
+      const list = aliveByProject.get(w.projectId) ?? [];
+      list.push(w.id);
+      aliveByProject.set(w.projectId, list);
+    }
+    const seenPatches = new Set<string>();
+    const ringRadius = 3.5;
+    for (const [projectId, ids] of aliveByProject) {
+      ids.sort();
+      const base = baseMeshes.get(projectId);
+      if (!base) continue;
+      const N = ids.length;
+      for (let i = 0; i < N; i++) {
+        const wid = ids[i]!;
+        seenPatches.add(wid);
+        const angle = (2 * Math.PI * i) / N;
+        const px = base.position.x + Math.cos(angle) * ringRadius;
+        const pz = base.position.z + Math.sin(angle) * ringRadius;
+        let entry = patchMeshes.get(wid);
+        if (!entry) {
+          const mesh = new THREE.Mesh(
+            new THREE.BoxGeometry(0.9, 0.6, 0.9),
+            new THREE.MeshStandardMaterial({ color: '#7e57c2', emissive: '#311b92', emissiveIntensity: 0.5 })
+          );
+          patchGroup.add(mesh);
+          const label = state.workers[wid]?.label ?? wid;
+          entry = { mesh, label };
+          patchMeshes.set(wid, entry);
+        }
+        entry.label = state.workers[wid]?.label ?? wid;
+        entry.mesh.position.set(px, 0.3, pz);
+        const we = workerEntries.get(wid);
+        if (we) we.patchPosition.set(px, 0, pz);
+      }
+    }
+    for (const [wid, entry] of patchMeshes) {
+      if (!seenPatches.has(wid)) {
+        patchGroup.remove(entry.mesh);
+        patchMeshes.delete(wid);
       }
     }
   }
