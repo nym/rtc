@@ -3,6 +3,7 @@
 > Status: **Locked. Gap-filled. Testable. Documented. Loop-verifiable.** Companion docs: `README.md` (user-authored, see Appendix F), `ASSETS.md` (artist-facing voxel modelling guide).
 
 ## Changelog
+- **v1.3** — Mineral-haul VFX promoted from roadmap to MVP. After a successful harvest cycle (worker `activity` transitions out of `tool_use`), the worker carries a glowing voxel back to its base; on arrival within ≈1 world unit the carry is released. Worker hit-targets expose `data-carrying="true|false"` for assertions. Gate G6 extended with required spec `harvest-haul.spec.ts`.
 - **v1.2** — Mineral patches per worker. Each project's alive workers are paired 1:1 with mineral patches fanned in a uniform ring around the project base; worker `patchPosition` resolves to its assigned patch. Required `data-testid` `mineral-patch-{label}` added to D.11. Gate G6 extended with a new required spec `mineral-patches.spec.ts` asserting N alive workers ↔ N distinct patch positions.
 - **v1.1** — README authorship clarified: user provides `README.md`, agent does not author it. Gate G8 updated to check `## Project goals` and `## Quick start` headings, no unfilled markers, ≥80 lines, demo reference. Appendix F.2 rewritten as "agent must not rewrite the user's README." Halt-and-report condition for missing/unfit README replaces the original-prompt condition.
 - **v1.0** — Added Appendix G (completion gates): 10 machine-verifiable gates for the Ralph Wiggum loop, each a single shell command with explicit pass conditions; 120-minute total budget, 8 attempts per gate (G10 capped at 2), 10-minute per-attempt timeout, `.ralph/` logging contract, halt-and-report list. Replaced loose pass criteria in §8 and ONESHOT_PROMPT.md with a pointer to Appendix G.
@@ -1971,6 +1972,7 @@ pnpm test:e2e
 | `error-toast.spec.ts` | `worker.errored` produces visible toast, dismissible |
 | `reconnect.spec.ts` | Forced disconnect + reconnect resyncs from snapshot |
 | `mineral-patches.spec.ts` | N alive workers ↔ N `mineral-patch-{label}` hit-targets at distinct screen positions; on despawn, count decrements |
+| `harvest-haul.spec.ts` | Worker hit-target flips `data-carrying="true"` after `tool_use → idle` transition and back to `false` after returning to base |
 
 Per-test webm videos exist under `demos/tests/` after this gate runs.
 

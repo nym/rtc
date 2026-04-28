@@ -57,6 +57,7 @@ export function ThreeCanvas({ onSelectWorker }: Props) {
           className="worker-hit-target"
           data-testid={`worker-${p.label}`}
           data-alive={p.alive ? 'true' : 'false'}
+          data-carrying={p.carrying ? 'true' : 'false'}
           style={{ left: `${p.screenX}px`, top: `${p.screenY}px` }}
           onClick={() => onSelectWorker(p.workerId)}
         >

@@ -5,6 +5,7 @@ export interface WorkerProjection {
   workerId: string;
   label: string;
   alive: boolean;
+  carrying: boolean;
   screenX: number;
   screenY: number;
 }
@@ -102,6 +103,7 @@ export function createThreeApp(host: HTMLDivElement): ThreeApp {
         workerId: entry.workerId,
         label: entry.label,
         alive: entry.alive,
+        carrying: entry.carrying,
         screenX: sx,
         screenY: sy,
       });
@@ -160,6 +162,10 @@ export function createThreeApp(host: HTMLDivElement): ThreeApp {
       }
       entry.label = worker.label ?? worker.id;
       entry.alive = worker.alive;
+      // Detect "harvest done" transition: tool_use → not tool_use ⇒ carrying.
+      if (entry.activity === 'tool_use' && worker.activity !== 'tool_use' && worker.alive) {
+        entry.carrying = true;
+      }
       entry.activity = worker.activity;
       entry.basePosition = baseMeshes.get(worker.projectId)?.position ?? entry.basePosition;
     }
@@ -256,6 +262,8 @@ interface WorkerEntry {
   activity: 'idle' | 'thinking' | 'tool_use' | 'streaming';
   group: THREE.Group;
   body: THREE.Mesh;
+  carry: THREE.Mesh;
+  carrying: boolean;
   basePosition: THREE.Vector3 | undefined;
   patchPosition: THREE.Vector3;
   phase: number;
@@ -279,6 +287,19 @@ function createWorkerEntry(
   );
   head.position.y = 1.2;
   group.add(head);
+  const carry = new THREE.Mesh(
+    new THREE.BoxGeometry(0.35, 0.35, 0.35),
+    new THREE.MeshStandardMaterial({
+      color: '#d1c4ff',
+      emissive: '#7e57c2',
+      emissiveIntensity: 1.4,
+      transparent: true,
+      opacity: 0.95,
+    })
+  );
+  carry.position.y = 1.7;
+  carry.visible = false;
+  group.add(carry);
   const seedPos = placeOnGround(`worker:${workerId}`);
   group.position.set(seedPos.x, 0, seedPos.z);
   return {
@@ -288,6 +309,8 @@ function createWorkerEntry(
     activity: 'idle',
     group,
     body,
+    carry,
+    carrying: false,
     basePosition: base?.position,
     patchPosition: new THREE.Vector3(4.5, 0, 0),
     phase: hashFloat(workerId),
@@ -305,7 +328,7 @@ function stepWorker(entry: WorkerEntry, _dt: number, now: number): void {
   const frozen = typeof window !== 'undefined' && (window as Window & { __RTC_FREEZE_MOTION?: boolean }).__RTC_FREEZE_MOTION === true;
 
   if (!frozen) {
-    const target = pickTarget(entry, t);
+    const target = pickTarget(entry);
     const dir = target.clone().sub(entry.group.position);
     dir.y = 0;
     const dist = dir.length();
@@ -315,9 +338,23 @@ function stepWorker(entry: WorkerEntry, _dt: number, now: number): void {
       entry.group.rotation.y = Math.atan2(dir.x, dir.z);
     }
     entry.body.position.y = 0.5 + Math.sin(t * 6) * 0.04;
+
+    // Carry release: dropping minerals when within ≈1 unit of base on the ground plane.
+    if (entry.carrying && entry.basePosition) {
+      const dx = entry.group.position.x - entry.basePosition.x;
+      const dz = entry.group.position.z - entry.basePosition.z;
+      if (Math.sqrt(dx * dx + dz * dz) < 1.0) entry.carrying = false;
+    }
   } else {
     entry.body.position.y = 0.5;
   }
+
+  entry.carry.visible = entry.carrying && entry.alive;
+  if (entry.carry.visible && !frozen) {
+    entry.carry.position.y = 1.7 + Math.sin(t * 5) * 0.1;
+    entry.carry.rotation.y = t * 1.5;
+  }
+
   entry.group.scale.setScalar(entry.alive ? 1 : 0.6);
 
   const mat = entry.body.material as THREE.MeshStandardMaterial;
@@ -328,9 +365,8 @@ function stepWorker(entry: WorkerEntry, _dt: number, now: number): void {
   }
 }
 
-function pickTarget(entry: WorkerEntry, t: number): THREE.Vector3 {
-  const cycle = Math.floor(t * 0.8) % 2;
+function pickTarget(entry: WorkerEntry): THREE.Vector3 {
+  if (entry.carrying && entry.basePosition) return entry.basePosition;
   if (entry.activity === 'tool_use') return entry.patchPosition;
-  if (cycle === 0 && entry.basePosition) return entry.basePosition;
   return entry.patchPosition;
 }
