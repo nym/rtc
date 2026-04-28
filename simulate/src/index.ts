@@ -2,12 +2,14 @@ import { runLlminerals } from './scenarios/llminerals.js';
 import { runErrorStorm } from './scenarios/error-storm.js';
 import { runKillFlow } from './scenarios/kill-flow.js';
 import { runHappyPath } from './scenarios/happy-path.js';
+import { runCc3Mcp } from './scenarios/cc3-mcp.js';
 import { httpSink } from './transport.js';
 
 export { runLlminerals } from './scenarios/llminerals.js';
 export { runErrorStorm } from './scenarios/error-storm.js';
 export { runKillFlow } from './scenarios/kill-flow.js';
 export { runHappyPath } from './scenarios/happy-path.js';
+export { runCc3Mcp } from './scenarios/cc3-mcp.js';
 export * from './simulator-core.js';
 export { httpSink, fakeSink } from './transport.js';
 
@@ -42,6 +44,7 @@ function help() {
 
 Scenarios:
   llminerals     5-worker harvest demo (default)
+  cc3-mcp        3 Claude Code workers + MCP server traffic, patches below base
   error-storm    Rapid recoverable errors
   kill-flow      Spawn workers and wait for kills
   happy-path     Single completed worker
@@ -62,6 +65,14 @@ async function runCli() {
   switch (scenario) {
     case 'llminerals':
       await runLlminerals({
+        sink,
+        ...(args.duration !== undefined ? { durationMin: args.duration } : {}),
+        ...(args.speed !== undefined ? { speed: args.speed } : {}),
+        ...(args.seed !== undefined ? { uuidSeed: args.seed } : {}),
+      });
+      break;
+    case 'cc3-mcp':
+      await runCc3Mcp({
         sink,
         ...(args.duration !== undefined ? { durationMin: args.duration } : {}),
         ...(args.speed !== undefined ? { speed: args.speed } : {}),

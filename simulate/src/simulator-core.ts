@@ -29,20 +29,35 @@ export function makeContext(
 
 export const upsertProject = (
   ctx: SimContext,
-  p: { id: string; name: string; color?: string }
+  p: { id: string; name: string; color?: string; patchArcCenter?: number }
 ) => ctx.sink({
   kind: 'project.upserted',
   t: ctx.now(), eventId: ctx.uuid(),
   project: p,
 });
 
+export const upsertMcpServer = (
+  ctx: SimContext,
+  args: { id: string; name: string; projectId: string }
+) => ctx.sink({
+  kind: 'mcp.server.upserted',
+  t: ctx.now(), eventId: ctx.uuid(),
+  server: args,
+});
+
 export const spawnWorker = (
   ctx: SimContext,
-  args: { projectId: string; workerId: string; label?: string; pid?: number }
+  args: {
+    projectId: string;
+    workerId: string;
+    label?: string;
+    pid?: number;
+    source?: 'sdk-script' | 'claude-code';
+  }
 ) => ctx.sink({
   kind: 'worker.spawned',
   t: ctx.now(), eventId: ctx.uuid(),
-  source: 'sdk-script',
+  source: args.source ?? 'sdk-script',
   hostname: 'simulator',
   ...args,
 });
@@ -137,5 +152,32 @@ export async function harvestOnce(
     usd: (out * 4 * 3 + out * 15) / 1_000_000,
   });
   await completeTask(ctx, workerId, 'harvest');
+  await setActivity(ctx, workerId, 'idle');
+}
+
+/** One full MCP-call run for a worker — flips activity to mcp_call and harvests context. */
+export async function mcpCallOnce(
+  ctx: SimContext,
+  workerId: string,
+  serverName: string,
+  toolName: string,
+  opts?: { thinkMs?: number; workMs?: number; tokens?: number }
+) {
+  const thinkMs = opts?.thinkMs ?? 600;
+  const workMs  = opts?.workMs  ?? 1000;
+  const out     = opts?.tokens  ?? 80;
+
+  await setActivity(ctx, workerId, 'thinking');
+  await sleep(thinkMs);
+
+  await setActivity(ctx, workerId, 'mcp_call', `mcp__${serverName}__${toolName}`);
+  await sleep(workMs);
+
+  await consumeTokens(ctx, {
+    workerId,
+    inputTokens: out * 3,
+    outputTokens: out,
+    usd: (out * 3 * 3 + out * 15) / 1_000_000,
+  });
   await setActivity(ctx, workerId, 'idle');
 }

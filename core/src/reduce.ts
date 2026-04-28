@@ -211,6 +211,18 @@ export function reduce(state: WorldState, event: DashboardEvent): WorldState {
         revision: state.revision + 1,
       };
     }
+
+    case 'mcp.server.upserted': {
+      const existing = state.mcpServers[event.server.id];
+      const next = existing
+        ? { ...existing, name: event.server.name, projectId: event.server.projectId, lastSeen: event.t }
+        : { ...event.server, firstSeen: event.t, lastSeen: event.t };
+      return {
+        ...state,
+        mcpServers: { ...state.mcpServers, [event.server.id]: next },
+        revision: state.revision + 1,
+      };
+    }
   }
 }
 

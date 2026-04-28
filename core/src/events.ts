@@ -13,6 +13,18 @@ export interface ProjectInfo {
   name: string;
   cwd?: string;
   color?: string;
+  /**
+   * Center of the worker-patch fan around this project's base, in radians.
+   * Default arc spans π centered at π/4 (camera-facing upper arc). Override to
+   * relocate the patch fan — e.g. -π/2 to fan patches "below" the base.
+   */
+  patchArcCenter?: number;
+}
+
+export interface McpServerInfo {
+  id: string;
+  name: string;
+  projectId: string;
 }
 
 export type DashboardEvent =
@@ -79,6 +91,10 @@ export type DashboardEvent =
   | (EventBase & {
       kind: 'session.compacted';
       workerId: string;
+    })
+  | (EventBase & {
+      kind: 'mcp.server.upserted';
+      server: McpServerInfo;
     })
   | (EventBase & {
       kind: 'worker.despawned';

@@ -391,4 +391,59 @@ describe('ingest-claude-code new hooks (subagents, notifications, compaction, fa
     expect(w?.errorCount).toBe(1);
     expect(w?.lastError).toBe('rate_limit_error');
   });
+
+  test('on-pretooluse with mcp__server__tool emits mcp.server.upserted', async () => {
+    const sessionId = 'sess-mcp-upsert-1';
+    await seedWorker(sessionId);
+    const result = await runHook('on-pretooluse.ts', {
+      session_id: sessionId,
+      tool_name: 'mcp__github__list_issues',
+      cwd: '/tmp/test-project',
+    }, handle.port);
+    expect(result.exitCode).toBe(0);
+
+    const servers = handle.state().mcpServers;
+    const srv = servers['test-project:github'];
+    expect(srv).toBeDefined();
+    expect(srv?.name).toBe('github');
+    expect(srv?.projectId).toBe('test-project');
+  });
+
+  test('on-pretooluse with malformed mcp__ name does not crash', async () => {
+    const sessionId = 'sess-mcp-malformed-1';
+    await seedWorker(sessionId);
+
+    // Empty rest after mcp__ — should still succeed and not emit a server.
+    const r1 = await runHook('on-pretooluse.ts', {
+      session_id: sessionId,
+      tool_name: 'mcp__',
+      cwd: '/tmp/test-project',
+    }, handle.port);
+    expect(r1.exitCode).toBe(0);
+    expect(handle.state().mcpServers['test-project:']).toBeUndefined();
+
+    // No __ separator — entire suffix is treated as the server name.
+    const r2 = await runHook('on-pretooluse.ts', {
+      session_id: sessionId,
+      tool_name: 'mcp__justserver',
+      cwd: '/tmp/test-project',
+    }, handle.port);
+    expect(r2.exitCode).toBe(0);
+    const srv = handle.state().mcpServers['test-project:justserver'];
+    expect(srv).toBeDefined();
+    expect(srv?.name).toBe('justserver');
+    expect(srv?.projectId).toBe('test-project');
+  });
+
+  test('on-pretooluse without mcp__ prefix does NOT emit mcp.server.upserted', async () => {
+    const sessionId = 'sess-mcp-none-1';
+    await seedWorker(sessionId);
+    const result = await runHook('on-pretooluse.ts', {
+      session_id: sessionId,
+      tool_name: 'Bash',
+      cwd: '/tmp/test-project',
+    }, handle.port);
+    expect(result.exitCode).toBe(0);
+    expect(Object.keys(handle.state().mcpServers)).toHaveLength(0);
+  });
 });

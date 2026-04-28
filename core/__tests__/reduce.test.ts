@@ -212,4 +212,48 @@ describe('reduce', () => {
     expect(s.workers['sub-A']?.parentWorkerId).toBe('parent-1');
     expect(s.workers['sub-A']?.agentType).toBe('Explore');
   });
+
+  test('mcp.server.upserted inserts a new server keyed by id with firstSeen=lastSeen=event.t', () => {
+    let s = initialWorldState();
+    const revBefore = s.revision;
+    s = reduce(s, {
+      kind: 'mcp.server.upserted', t: 42, eventId: 'mcp-1',
+      server: { id: 'p1:github', name: 'github', projectId: 'p1' },
+    });
+    const srv = s.mcpServers['p1:github'];
+    expect(srv).toBeDefined();
+    expect(srv?.name).toBe('github');
+    expect(srv?.projectId).toBe('p1');
+    expect(srv?.firstSeen).toBe(42);
+    expect(srv?.lastSeen).toBe(42);
+    expect(s.revision).toBe(revBefore + 1);
+  });
+
+  test('mcp.server.upserted for an existing id updates name/projectId/lastSeen but preserves firstSeen', () => {
+    let s = initialWorldState();
+    s = reduce(s, {
+      kind: 'mcp.server.upserted', t: 100, eventId: 'mcp-first',
+      server: { id: 'p1:github', name: 'github', projectId: 'p1' },
+    });
+    const revAfterFirst = s.revision;
+    s = reduce(s, {
+      kind: 'mcp.server.upserted', t: 250, eventId: 'mcp-second',
+      server: { id: 'p1:github', name: 'github-renamed', projectId: 'p2' },
+    });
+    const srv = s.mcpServers['p1:github'];
+    expect(srv?.firstSeen).toBe(100);
+    expect(srv?.lastSeen).toBe(250);
+    expect(srv?.name).toBe('github-renamed');
+    expect(srv?.projectId).toBe('p2');
+    expect(s.revision).toBe(revAfterFirst + 1);
+  });
+
+  test('project.upserted carries through patchArcCenter when set', () => {
+    let s = initialWorldState();
+    s = reduce(s, {
+      kind: 'project.upserted', t: 1, eventId: 'p-arc',
+      project: { id: 'p1', name: 'p1', patchArcCenter: -Math.PI / 2 },
+    });
+    expect(s.projects['p1']?.patchArcCenter).toBeCloseTo(-Math.PI / 2, 9);
+  });
 });

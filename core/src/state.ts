@@ -5,7 +5,16 @@ export interface Project {
   name: string;
   cwd?: string;
   color?: string;
+  patchArcCenter?: number;
   createdAt: number;
+}
+
+export interface McpServer {
+  id: string;
+  name: string;
+  projectId: string;
+  firstSeen: number;
+  lastSeen: number;
 }
 
 export interface Worker {
@@ -53,6 +62,7 @@ export interface Totals {
 export interface WorldState {
   projects: Record<string, Project>;
   workers: Record<string, Worker>;
+  mcpServers: Record<string, McpServer>;
   totals: Totals;
   /** Monotonic — bumped on any state mutation. */
   revision: number;
@@ -61,6 +71,7 @@ export interface WorldState {
 export const initialWorldState = (): WorldState => ({
   projects: {},
   workers: {},
+  mcpServers: {},
   totals: {
     inputTokens: 0,
     outputTokens: 0,

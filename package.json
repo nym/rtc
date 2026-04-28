@@ -15,6 +15,7 @@
     "dev": "concurrently -k -n coord,dash -c blue,magenta \"pnpm dev:coordinator\" \"pnpm dev:dashboard\"",
     "simulate": "tsx simulate/src/index.ts",
     "simulate:demo": "tsx simulate/src/index.ts llminerals --duration 60",
+    "simulate:cc3": "tsx simulate/src/index.ts cc3-mcp --duration 60",
     "test": "vitest run",
     "test:e2e": "playwright test --project=e2e --config dashboard/e2e/playwright.config.ts",
     "test:e2e:ui": "playwright test --project=e2e --ui --config dashboard/e2e/playwright.config.ts",

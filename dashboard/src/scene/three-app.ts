@@ -32,8 +32,15 @@ export interface ThreeApp {
 }
 
 const PATCH_RADIUS = 5.5;
-const PATCH_ARC_START = -Math.PI / 4;
 const PATCH_ARC_SPAN = Math.PI;
+const DEFAULT_PATCH_ARC_CENTER = Math.PI / 4;
+const MCP_RADIUS = 8.5;
+const MCP_ARC_CENTER = -3 * Math.PI / 4; // opposite side from default patch arc
+const MCP_ARC_SPAN = Math.PI / 2;
+const ZOOM_EXTENT_MIN = 4;
+const ZOOM_EXTENT_MAX = 30;
+const ZOOM_EXTENT_DEFAULT = 14;
+const ZOOM_STEP = 1.1;
 const WORKER_OBJ_URL = '/assets/MobileStorageBot.obj';
 const WORKER_MTL_URL = '/assets/MobileStorageBot.mtl';
 
@@ -88,8 +95,9 @@ export async function createThreeApp(host: HTMLDivElement): Promise<ThreeApp> {
   scene.background = new THREE.Color('#050a14');
   scene.fog = new THREE.Fog('#050a14', 28, 70);
 
+  let zoomExtent = ZOOM_EXTENT_DEFAULT;
   const cam = new THREE.OrthographicCamera(-14, 14, 14, -14, 0.1, 200);
-  applyFrustum(cam, host.clientWidth || 1, host.clientHeight || 1);
+  applyFrustum(cam, host.clientWidth || 1, host.clientHeight || 1, zoomExtent);
   positionIsoCamera(cam, 36);
   cam.updateProjectionMatrix();
 
@@ -123,12 +131,15 @@ export async function createThreeApp(host: HTMLDivElement): Promise<ThreeApp> {
   scene.add(patchGroup);
   const baseGroup = new THREE.Group();
   scene.add(baseGroup);
+  const mcpGroup = new THREE.Group();
+  scene.add(mcpGroup);
   const unitsGroup = new THREE.Group();
   scene.add(unitsGroup);
 
   const baseMeshes = new Map<string, THREE.Group>();
   const workerEntries = new Map<string, WorkerEntry>();
   const patchMeshes = new Map<string, { mesh: THREE.Mesh; label: string }>();
+  const mcpMeshes = new Map<string, { mesh: THREE.Group; position: THREE.Vector3; label: string }>();
 
   const projectionVec = new THREE.Vector3();
   let onFrame: ((snap: FrameSnapshot) => void) | null = null;
@@ -195,6 +206,45 @@ export async function createThreeApp(host: HTMLDivElement): Promise<ThreeApp> {
       }
     }
 
+    // MCP servers: rendered as off-base obelisks, fanned on the arc opposite the patches.
+    const mcpByProject = new Map<string, string[]>();
+    for (const s of Object.values(state.mcpServers)) {
+      const list = mcpByProject.get(s.projectId) ?? [];
+      list.push(s.id);
+      mcpByProject.set(s.projectId, list);
+    }
+    const seenMcp = new Set<string>();
+    for (const [projectId, ids] of mcpByProject) {
+      ids.sort();
+      const base = baseMeshes.get(projectId);
+      if (!base) continue;
+      const N = ids.length;
+      for (let i = 0; i < N; i++) {
+        const sid = ids[i]!;
+        seenMcp.add(sid);
+        const angle = MCP_ARC_CENTER - MCP_ARC_SPAN / 2 + MCP_ARC_SPAN * (i + 0.5) / N;
+        const sx = base.position.x + Math.cos(angle) * MCP_RADIUS;
+        const sz = base.position.z + Math.sin(angle) * MCP_RADIUS;
+        const server = state.mcpServers[sid]!;
+        let entry = mcpMeshes.get(sid);
+        if (!entry) {
+          const mesh = createMcpServer();
+          mcpGroup.add(mesh);
+          entry = { mesh, position: new THREE.Vector3(sx, 0, sz), label: server.name };
+          mcpMeshes.set(sid, entry);
+        }
+        entry.mesh.position.set(sx, 0, sz);
+        entry.position.set(sx, 0, sz);
+        entry.label = server.name;
+      }
+    }
+    for (const [sid, entry] of mcpMeshes) {
+      if (!seenMcp.has(sid)) {
+        mcpGroup.remove(entry.mesh);
+        mcpMeshes.delete(sid);
+      }
+    }
+
     const seenWorkers = new Set<string>();
     for (const worker of Object.values(state.workers)) {
       seenWorkers.add(worker.id);
@@ -206,12 +256,29 @@ export async function createThreeApp(host: HTMLDivElement): Promise<ThreeApp> {
       }
       entry.label = worker.label ?? worker.id;
       entry.alive = worker.alive;
-      // Only flip to carrying if the worker actually made it to the patch during tool_use —
-      // otherwise the cycle ratchets them back to base before they ever leave.
-      if (entry.activity === 'tool_use' && worker.activity !== 'tool_use' && worker.alive) {
-        const dx = entry.group.position.x - entry.patchPosition.x;
-        const dz = entry.group.position.z - entry.patchPosition.z;
-        if (Math.sqrt(dx * dx + dz * dz) < 1.5) entry.carrying = true;
+      // Resolve which MCP server (if any) this worker targets when in mcp_call.
+      // Pick deterministically by hashing workerId across the project's servers so
+      // multi-server projects spread traffic visibly.
+      const projectMcpIds = mcpByProject.get(worker.projectId) ?? [];
+      if (projectMcpIds.length > 0) {
+        const idx = (Math.abs(hashInt(worker.id)) % projectMcpIds.length);
+        const server = mcpMeshes.get(projectMcpIds[idx]!);
+        if (server) entry.mcpTargetPosition = server.position;
+      } else {
+        entry.mcpTargetPosition = undefined;
+      }
+      // Carrying flips when the worker leaves an active harvest pose (tool_use or
+      // mcp_call) while close enough to the corresponding target.
+      if (entry.alive) {
+        if (entry.activity === 'tool_use' && worker.activity !== 'tool_use') {
+          const dx = entry.group.position.x - entry.patchPosition.x;
+          const dz = entry.group.position.z - entry.patchPosition.z;
+          if (Math.sqrt(dx * dx + dz * dz) < 1.5) entry.carrying = true;
+        } else if (entry.activity === 'mcp_call' && worker.activity !== 'mcp_call' && entry.mcpTargetPosition) {
+          const dx = entry.group.position.x - entry.mcpTargetPosition.x;
+          const dz = entry.group.position.z - entry.mcpTargetPosition.z;
+          if (Math.sqrt(dx * dx + dz * dz) < 1.8) entry.carrying = true;
+        }
       }
       entry.activity = worker.activity;
       entry.basePosition = baseMeshes.get(worker.projectId)?.position ?? entry.basePosition;
@@ -223,7 +290,7 @@ export async function createThreeApp(host: HTMLDivElement): Promise<ThreeApp> {
       }
     }
 
-    // Patches: 1:1 with alive workers per project, fanned across the camera-facing arc.
+    // Patches: 1:1 with alive workers per project, fanned across the project's arc.
     const aliveByProject = new Map<string, string[]>();
     for (const w of Object.values(state.workers)) {
       if (!w.alive) continue;
@@ -236,11 +303,14 @@ export async function createThreeApp(host: HTMLDivElement): Promise<ThreeApp> {
       ids.sort();
       const base = baseMeshes.get(projectId);
       if (!base) continue;
+      const project = state.projects[projectId];
+      const arcCenter = project?.patchArcCenter ?? DEFAULT_PATCH_ARC_CENTER;
+      const arcStart = arcCenter - PATCH_ARC_SPAN / 2;
       const N = ids.length;
       for (let i = 0; i < N; i++) {
         const wid = ids[i]!;
         seenPatches.add(wid);
-        const angle = PATCH_ARC_START + PATCH_ARC_SPAN * (i + 0.5) / N;
+        const angle = arcStart + PATCH_ARC_SPAN * (i + 0.5) / N;
         const px = base.position.x + Math.cos(angle) * PATCH_RADIUS;
         const pz = base.position.z + Math.sin(angle) * PATCH_RADIUS;
         let entry = patchMeshes.get(wid);
@@ -268,8 +338,18 @@ export async function createThreeApp(host: HTMLDivElement): Promise<ThreeApp> {
     }
   }
 
+  const onWheel = (ev: WheelEvent) => {
+    ev.preventDefault();
+    // deltaY > 0 = scroll down = zoom out; < 0 = zoom in.
+    const factor = ev.deltaY > 0 ? ZOOM_STEP : 1 / ZOOM_STEP;
+    zoomExtent = Math.min(ZOOM_EXTENT_MAX, Math.max(ZOOM_EXTENT_MIN, zoomExtent * factor));
+    applyFrustum(cam, host.clientWidth || 1, host.clientHeight || 1, zoomExtent);
+  };
+  renderer.domElement.addEventListener('wheel', onWheel, { passive: false });
+
   function dispose() {
     cancelAnimationFrame(raf);
+    renderer.domElement.removeEventListener('wheel', onWheel);
     renderer.dispose();
     if (renderer.domElement.parentElement) {
       renderer.domElement.parentElement.removeChild(renderer.domElement);
@@ -277,7 +357,7 @@ export async function createThreeApp(host: HTMLDivElement): Promise<ThreeApp> {
   }
 
   function resize(w: number, h: number) {
-    applyFrustum(cam, w, h);
+    applyFrustum(cam, w, h, zoomExtent);
     renderer.setSize(w, h);
   }
 
@@ -290,19 +370,18 @@ export async function createThreeApp(host: HTMLDivElement): Promise<ThreeApp> {
 }
 
 /** Clamp the orthographic frustum so the base + fanned patches fit on any aspect ratio. */
-function applyFrustum(cam: THREE.OrthographicCamera, w: number, h: number): void {
-  const targetExtent = 14;
+function applyFrustum(cam: THREE.OrthographicCamera, w: number, h: number, extent: number): void {
   const a = (w || 1) / (h || 1);
   if (a >= 1) {
-    cam.left = -targetExtent * a;
-    cam.right = targetExtent * a;
-    cam.top = targetExtent;
-    cam.bottom = -targetExtent;
+    cam.left = -extent * a;
+    cam.right = extent * a;
+    cam.top = extent;
+    cam.bottom = -extent;
   } else {
-    cam.left = -targetExtent;
-    cam.right = targetExtent;
-    cam.top = targetExtent / a;
-    cam.bottom = -targetExtent / a;
+    cam.left = -extent;
+    cam.right = extent;
+    cam.top = extent / a;
+    cam.bottom = -extent / a;
   }
   cam.updateProjectionMatrix();
 }
@@ -320,13 +399,14 @@ interface WorkerEntry {
   workerId: string;
   label: string;
   alive: boolean;
-  activity: 'idle' | 'thinking' | 'tool_use' | 'streaming';
+  activity: 'idle' | 'thinking' | 'tool_use' | 'mcp_call' | 'streaming';
   group: THREE.Group;
   body: THREE.Mesh | THREE.Object3D;
   carry: THREE.Mesh;
   carrying: boolean;
   basePosition: THREE.Vector3 | undefined;
   patchPosition: THREE.Vector3;
+  mcpTargetPosition: THREE.Vector3 | undefined;
   phase: number;
   usingTemplate: boolean;
 }
@@ -396,9 +476,16 @@ function createWorkerEntry(
     carrying: false,
     basePosition: base?.position,
     patchPosition: new THREE.Vector3(PATCH_RADIUS, 0, 0),
+    mcpTargetPosition: undefined,
     phase: hashFloat(workerId),
     usingTemplate,
   };
+}
+
+function hashInt(s: string): number {
+  let h = 0;
+  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
+  return h;
 }
 
 function hashFloat(s: string): number {
@@ -407,19 +494,20 @@ function hashFloat(s: string): number {
   return (h % 1000) / 1000;
 }
 
+const _stepDir = new THREE.Vector3();
 function stepWorker(entry: WorkerEntry, _dt: number, now: number): void {
   const t = (now / 1000) + entry.phase * 4;
   const frozen = typeof window !== 'undefined' && (window as Window & { __RTC_FREEZE_MOTION?: boolean }).__RTC_FREEZE_MOTION === true;
 
   if (!frozen) {
     const target = pickTarget(entry);
-    const dir = target.clone().sub(entry.group.position);
-    dir.y = 0;
-    const dist = dir.length();
+    _stepDir.copy(target).sub(entry.group.position);
+    _stepDir.y = 0;
+    const dist = _stepDir.length();
     if (dist > 0.05) {
-      dir.normalize().multiplyScalar(0.024);
-      entry.group.position.add(dir);
-      entry.group.rotation.y = Math.atan2(dir.x, dir.z);
+      _stepDir.normalize().multiplyScalar(0.024);
+      entry.group.position.add(_stepDir);
+      entry.group.rotation.y = Math.atan2(_stepDir.x, _stepDir.z);
     }
     if (!entry.usingTemplate && (entry.body as THREE.Mesh).position) {
       (entry.body as THREE.Mesh).position.y = 0.5 + Math.sin(t * 6) * 0.04;
@@ -443,7 +531,36 @@ function stepWorker(entry: WorkerEntry, _dt: number, now: number): void {
 
 function pickTarget(entry: WorkerEntry): THREE.Vector3 {
   if (entry.carrying && entry.basePosition) return entry.basePosition;
+  if (entry.activity === 'mcp_call' && entry.mcpTargetPosition) return entry.mcpTargetPosition;
   return entry.patchPosition;
+}
+
+function createMcpServer(): THREE.Group {
+  const group = new THREE.Group();
+  const dark = new THREE.MeshStandardMaterial({ color: '#1c2332', roughness: 0.7, metalness: 0.2 });
+  const cyan = new THREE.MeshStandardMaterial({ color: '#3df0c4', emissive: '#1bd6a8', emissiveIntensity: 1.4 });
+  const hull = new THREE.MeshStandardMaterial({ color: '#3a4a64', roughness: 0.55, metalness: 0.35 });
+
+  const pad = new THREE.Mesh(new THREE.BoxGeometry(1.4, 0.2, 1.4), dark);
+  pad.position.y = 0.1;
+  group.add(pad);
+
+  const trunk = new THREE.Mesh(new THREE.BoxGeometry(0.6, 1.6, 0.6), hull);
+  trunk.position.y = 1.0;
+  group.add(trunk);
+
+  // Antenna dish
+  const dish = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.5, 0.1, 16), hull);
+  dish.position.y = 1.95;
+  dish.rotation.x = -Math.PI / 4;
+  group.add(dish);
+
+  // Glowing emitter
+  const beacon = new THREE.Mesh(new THREE.SphereGeometry(0.18, 16, 12), cyan);
+  beacon.position.y = 2.2;
+  group.add(beacon);
+
+  return group;
 }
 
 function createSpaceFactory(colorStr: string): THREE.Group {
