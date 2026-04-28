@@ -7,13 +7,20 @@ export interface FakeHandle {
   reconnect: () => Promise<void>;
 }
 
-type Fixtures = { fake: FakeHandle };
+interface Fixtures {
+  fake: FakeHandle;
+  /** When true, dashboard worker animation is paused so hit-target positions are stable. */
+  freezeMotion: boolean;
+}
 
 export const test = base.extend<Fixtures>({
-  fake: async ({ page }, use) => {
-    await page.addInitScript(() => {
-      (window as Window & typeof globalThis).__RTC_TEST_MODE = true;
-    });
+  freezeMotion: [true, { option: true }],
+  fake: async ({ page, freezeMotion }, use) => {
+    await page.addInitScript((freeze: boolean) => {
+      const w = window as Window & typeof globalThis;
+      w.__RTC_TEST_MODE = true;
+      if (freeze) (w as Window & { __RTC_FREEZE_MOTION?: boolean }).__RTC_FREEZE_MOTION = true;
+    }, freezeMotion);
 
     const handle: FakeHandle = {
       async ingest(e) {

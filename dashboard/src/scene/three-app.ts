@@ -240,9 +240,9 @@ function hashFloat(s: string): number {
 
 function stepWorker(entry: WorkerEntry, _dt: number, now: number): void {
   const t = (now / 1000) + entry.phase * 4;
-  const testMode = typeof window !== 'undefined' && (window as Window & { __RTC_TEST_MODE?: boolean }).__RTC_TEST_MODE === true;
+  const frozen = typeof window !== 'undefined' && (window as Window & { __RTC_FREEZE_MOTION?: boolean }).__RTC_FREEZE_MOTION === true;
 
-  if (!testMode) {
+  if (!frozen) {
     const target = pickTarget(entry, t);
     const dir = target.clone().sub(entry.group.position);
     dir.y = 0;
@@ -259,7 +259,7 @@ function stepWorker(entry: WorkerEntry, _dt: number, now: number): void {
   entry.group.scale.setScalar(entry.alive ? 1 : 0.6);
 
   const mat = entry.body.material as THREE.MeshStandardMaterial;
-  if (!testMode && (entry.activity === 'tool_use' || entry.activity === 'streaming')) {
+  if (!frozen && (entry.activity === 'tool_use' || entry.activity === 'streaming')) {
     mat.emissiveIntensity = 0.6 + Math.sin(t * 8) * 0.2;
   } else {
     mat.emissiveIntensity = 0.35;

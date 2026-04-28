@@ -1,6 +1,8 @@
 import { test } from './fixtures/coordinator-fixture.js';
 import type { DashboardEvent } from '@rtc/core';
 
+test.use({ freezeMotion: false });
+
 const LABELS = ['Alpha', 'Bravo', 'Charlie', 'Delta', 'Echo'] as const;
 const PROJECT_ID = 'demo-llminerals';
 
