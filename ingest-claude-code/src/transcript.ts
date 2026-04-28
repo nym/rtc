@@ -63,6 +63,37 @@ export async function aggregate(transcriptPath: string): Promise<UsageTotals> {
   return totals;
 }
 
+/**
+ * Read the most recent assistant turn's input_tokens — approximates current context
+ * window utilization, since input_tokens for a turn = full conversation re-read.
+ * Returns 0 if no assistant turn with usage exists.
+ */
+export async function lastInputTokens(transcriptPath: string): Promise<number> {
+  if (!fs.existsSync(transcriptPath)) return 0;
+
+  const stream = readline.createInterface({
+    input: fs.createReadStream(transcriptPath),
+    crlfDelay: Infinity,
+  });
+
+  let last = 0;
+  for await (const line of stream) {
+    if (!line.trim()) continue;
+    let obj: AssistantLine;
+    try { obj = JSON.parse(line) as AssistantLine; }
+    catch { continue; }
+    if (obj?.type !== 'assistant') continue;
+    const u = obj.message?.usage;
+    if (!u) continue;
+    const inputTotal =
+      (u.input_tokens ?? 0) +
+      (u.cache_read_input_tokens ?? 0) +
+      (u.cache_creation_input_tokens ?? 0);
+    if (inputTotal > 0) last = inputTotal;
+  }
+  return last;
+}
+
 /** Aggregate by model so per-turn model swaps are cost-correct. */
 export async function aggregateByModel(transcriptPath: string): Promise<PerModelTotals> {
   const byModel: PerModelTotals = {};

@@ -58,6 +58,10 @@ export function reduce(state: WorldState, event: DashboardEvent): WorldState {
         tasksCompleted: prev?.tasksCompleted ?? 0,
         errorCount: prev?.errorCount ?? 0,
         lastError: prev?.lastError,
+        parentWorkerId: event.parentWorkerId ?? prev?.parentWorkerId,
+        agentType: event.agentType ?? prev?.agentType,
+        contextTokens: prev?.contextTokens,
+        modelLimit: prev?.modelLimit,
       };
       const totals = recomputeTotalsForWorker(state.totals, prev, next);
       return {
@@ -155,6 +159,55 @@ export function reduce(state: WorldState, event: DashboardEvent): WorldState {
         ...state,
         workers: { ...state.workers, [event.workerId]: next },
         totals,
+        revision: state.revision + 1,
+      };
+    }
+
+    case 'worker.context': {
+      const w = state.workers[event.workerId];
+      if (!w) return state;
+      const next: Worker = {
+        ...w,
+        contextTokens: event.contextTokens,
+        modelLimit: event.modelLimit ?? w.modelLimit,
+        lastEventAt: event.t,
+      };
+      return {
+        ...state,
+        workers: { ...state.workers, [event.workerId]: next },
+        revision: state.revision + 1,
+      };
+    }
+
+    case 'worker.notification': {
+      const w = state.workers[event.workerId];
+      if (!w) return state;
+      const next: Worker = { ...w, lastEventAt: event.t };
+      return {
+        ...state,
+        workers: { ...state.workers, [event.workerId]: next },
+        revision: state.revision + 1,
+      };
+    }
+
+    case 'session.compact_imminent': {
+      const w = state.workers[event.workerId];
+      if (!w) return state;
+      const next: Worker = { ...w, compactImminent: true, lastEventAt: event.t };
+      return {
+        ...state,
+        workers: { ...state.workers, [event.workerId]: next },
+        revision: state.revision + 1,
+      };
+    }
+
+    case 'session.compacted': {
+      const w = state.workers[event.workerId];
+      if (!w) return state;
+      const next: Worker = { ...w, compactImminent: false, lastEventAt: event.t };
+      return {
+        ...state,
+        workers: { ...state.workers, [event.workerId]: next },
         revision: state.revision + 1,
       };
     }

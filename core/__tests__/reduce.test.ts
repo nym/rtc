@@ -128,4 +128,88 @@ describe('reduce', () => {
     expect(s.revision).toBeGreaterThan(start);
     expect(s.revision).toBe(start + 4);
   });
+
+  test('worker.context sets contextTokens and modelLimit on the worker', () => {
+    let s = reduceMany(initialWorldState(), [projectUpserted('p1'), workerSpawned('w1')]);
+    s = reduce(s, {
+      kind: 'worker.context', t: 12, eventId: 'ctx1',
+      workerId: 'w1', contextTokens: 12345, modelLimit: 200000,
+    });
+    expect(s.workers['w1']?.contextTokens).toBe(12345);
+    expect(s.workers['w1']?.modelLimit).toBe(200000);
+    expect(s.workers['w1']?.lastEventAt).toBe(12);
+  });
+
+  test('worker.context for an unknown worker is a no-op', () => {
+    const s0 = reduce(initialWorldState(), projectUpserted('p1'));
+    const s1 = reduce(s0, {
+      kind: 'worker.context', t: 13, eventId: 'ctx-noop',
+      workerId: 'unknown', contextTokens: 100,
+    });
+    expect(s1).toBe(s0);
+  });
+
+  test('worker.notification is a no-op state change but bumps lastEventAt and revision', () => {
+    let s = reduceMany(initialWorldState(), [projectUpserted('p1'), workerSpawned('w1')]);
+    const before = s.workers['w1']!;
+    const revBefore = s.revision;
+    s = reduce(s, {
+      kind: 'worker.notification', t: 99, eventId: 'n1',
+      workerId: 'w1', level: 'warn', message: 'permission required',
+    });
+    const after = s.workers['w1']!;
+    // Substantive fields unchanged
+    expect(after.activity).toBe(before.activity);
+    expect(after.errorCount).toBe(before.errorCount);
+    expect(after.inputTokens).toBe(before.inputTokens);
+    expect(after.lastError).toBe(before.lastError);
+    // lastEventAt and revision both bumped
+    expect(after.lastEventAt).toBe(99);
+    expect(s.revision).toBe(revBefore + 1);
+  });
+
+  test('worker.notification for an unknown worker is a no-op', () => {
+    const s0 = reduce(initialWorldState(), projectUpserted('p1'));
+    const s1 = reduce(s0, {
+      kind: 'worker.notification', t: 1, eventId: 'n-noop',
+      workerId: 'unknown', level: 'info', message: 'x',
+    });
+    expect(s1).toBe(s0);
+  });
+
+  test('session.compact_imminent flips compactImminent=true on the worker', () => {
+    let s = reduceMany(initialWorldState(), [projectUpserted('p1'), workerSpawned('w1')]);
+    expect(s.workers['w1']?.compactImminent).toBeUndefined();
+    s = reduce(s, {
+      kind: 'session.compact_imminent', t: 20, eventId: 'ci1',
+      workerId: 'w1', trigger: 'auto',
+    });
+    expect(s.workers['w1']?.compactImminent).toBe(true);
+    expect(s.workers['w1']?.lastEventAt).toBe(20);
+  });
+
+  test('session.compacted flips compactImminent=false on the worker', () => {
+    let s = reduceMany(initialWorldState(), [projectUpserted('p1'), workerSpawned('w1')]);
+    s = reduce(s, {
+      kind: 'session.compact_imminent', t: 21, eventId: 'ci2', workerId: 'w1',
+    });
+    expect(s.workers['w1']?.compactImminent).toBe(true);
+    s = reduce(s, {
+      kind: 'session.compacted', t: 22, eventId: 'cd1', workerId: 'w1',
+    });
+    expect(s.workers['w1']?.compactImminent).toBe(false);
+    expect(s.workers['w1']?.lastEventAt).toBe(22);
+  });
+
+  test('worker.spawned carries through parentWorkerId and agentType when set', () => {
+    let s = initialWorldState();
+    s = reduce(s, projectUpserted('p1'));
+    s = reduce(s, {
+      kind: 'worker.spawned', t: 30, eventId: 'spawn-sub',
+      projectId: 'p1', workerId: 'sub-A', source: 'claude-code',
+      parentWorkerId: 'parent-1', agentType: 'Explore',
+    });
+    expect(s.workers['sub-A']?.parentWorkerId).toBe('parent-1');
+    expect(s.workers['sub-A']?.agentType).toBe('Explore');
+  });
 });

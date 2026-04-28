@@ -1,4 +1,4 @@
-import { aggregateByModel, totalsToUsd } from './transcript.js';
+import { aggregateByModel, lastInputTokens, totalsToUsd } from './transcript.js';
 import { makeEventId, postEvents } from './post.js';
 import { readStdinJson } from './read-stdin.js';
 import { readMarks, writeMarks, deltaTotals, isNonZero } from './transcript-marks.js';
@@ -33,6 +33,16 @@ async function main() {
       ...(delta.cacheReadTokens ? { cacheReadTokens: delta.cacheReadTokens } : {}),
       ...(delta.cacheWriteTokens ? { cacheWriteTokens: delta.cacheWriteTokens } : {}),
       usd,
+    });
+  }
+
+  const ctx = await lastInputTokens(hook.transcript_path);
+  if (ctx > 0) {
+    events.push({
+      kind: 'worker.context',
+      t: Date.now(), eventId: makeEventId('ctx'),
+      workerId,
+      contextTokens: ctx,
     });
   }
 

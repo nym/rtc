@@ -29,6 +29,16 @@ export interface Worker {
   lastError?: string;
   /** When alive=false flipped to despawned. */
   despawnedAt?: number;
+  /** Set for subagent workers — points at the parent session's worker. */
+  parentWorkerId?: string;
+  /** Subagent classifier (e.g. "Explore", "general-purpose"). */
+  agentType?: string;
+  /** Most recent assistant turn's input token count, approximating context window utilization. */
+  contextTokens?: number;
+  /** Model context window limit, if known. */
+  modelLimit?: number;
+  /** Set true when PreCompact has fired and PostCompact has not yet. */
+  compactImminent?: boolean;
 }
 
 export interface Totals {

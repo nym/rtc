@@ -117,16 +117,30 @@ Add to `~/.claude/settings.json` (or per-project `.claude/settings.json`):
 ```json
 {
   "hooks": {
-    "SessionStart": [{ "hooks": [{ "type": "command",
+    "SessionStart":        [{ "hooks": [{ "type": "command",
       "command": "tsx /absolute/path/to/repo/ingest-claude-code/src/on-session-start.ts" }] }],
-    "PreToolUse":   [{ "hooks": [{ "type": "command",
+    "SessionEnd":          [{ "hooks": [{ "type": "command",
+      "command": "tsx /absolute/path/to/repo/ingest-claude-code/src/on-session-end.ts" }] }],
+    "PreToolUse":          [{ "hooks": [{ "type": "command",
       "command": "tsx /absolute/path/to/repo/ingest-claude-code/src/on-pretooluse.ts" }] }],
-    "PostToolUse":  [{ "hooks": [{ "type": "command",
+    "PostToolUse":         [{ "hooks": [{ "type": "command",
       "command": "tsx /absolute/path/to/repo/ingest-claude-code/src/on-posttooluse.ts" }] }],
-    "Stop":         [{ "hooks": [{ "type": "command",
+    "PostToolUseFailure":  [{ "hooks": [{ "type": "command",
+      "command": "tsx /absolute/path/to/repo/ingest-claude-code/src/on-posttooluse-failure.ts" }] }],
+    "Stop":                [{ "hooks": [{ "type": "command",
       "command": "tsx /absolute/path/to/repo/ingest-claude-code/src/on-stop.ts" }] }],
-    "SessionEnd":   [{ "hooks": [{ "type": "command",
-      "command": "tsx /absolute/path/to/repo/ingest-claude-code/src/on-session-end.ts" }] }]
+    "StopFailure":         [{ "hooks": [{ "type": "command",
+      "command": "tsx /absolute/path/to/repo/ingest-claude-code/src/on-stop-failure.ts" }] }],
+    "SubagentStart":       [{ "hooks": [{ "type": "command",
+      "command": "tsx /absolute/path/to/repo/ingest-claude-code/src/on-subagent-start.ts" }] }],
+    "SubagentStop":        [{ "hooks": [{ "type": "command",
+      "command": "tsx /absolute/path/to/repo/ingest-claude-code/src/on-subagent-stop.ts" }] }],
+    "Notification":        [{ "hooks": [{ "type": "command",
+      "command": "tsx /absolute/path/to/repo/ingest-claude-code/src/on-notification.ts" }] }],
+    "PreCompact":          [{ "hooks": [{ "type": "command",
+      "command": "tsx /absolute/path/to/repo/ingest-claude-code/src/on-pre-compact.ts" }] }],
+    "PostCompact":         [{ "hooks": [{ "type": "command",
+      "command": "tsx /absolute/path/to/repo/ingest-claude-code/src/on-post-compact.ts" }] }]
   }
 }
 ```
@@ -137,8 +151,17 @@ commands above assume `tsx` is on your `PATH`. Either install it globally
 `pnpm --dir /absolute/path/to/repo exec tsx <script>`.
 
 Each Claude Code session you start now appears as a worker. Tokens stream
-on every `Stop` hook (per turn) as a delta, with the worker despawning only
-when the session truly exits via `SessionEnd`.
+on every `Stop` (per turn) as a delta; subagent calls (`Task`/`Agent`) appear
+as child workers attached to their parent; MCP tool calls render distinctly
+from regular tool calls; impending or completed context compaction surfaces
+as a state change on the worker. The worker despawns only when the session
+truly exits via `SessionEnd`.
+
+> **Subagent token attribution:** subagents currently show 0 tokens of their
+> own — their consumption is rolled into the parent session's transcript and
+> isn't yet split out per `agent_id`. The parent worker's totals are still
+> correct (they include subagent usage); only the per-subagent breakdown is
+> missing. Tracked as future work.
 
 > **Composing with other hooks:** if you already have entries for these events
 > in `~/.claude/settings.json` (e.g. from ralph-loop or other tools), append
