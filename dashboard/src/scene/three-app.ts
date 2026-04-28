@@ -188,6 +188,10 @@ export async function createThreeApp(host: HTMLDivElement): Promise<ThreeApp> {
     const workers: WorkerProjection[] = [];
     for (const entry of workerEntries.values()) {
       stepWorker(entry, dt, now);
+      // Re-evaluate the tint each frame so the sub-3s grace window flips to
+      // red precisely when sustained idle is reached, not only on the next
+      // state change. applyStatusTint short-circuits if the color is unchanged.
+      applyStatusTint(entry, now);
       projectionVec.copy(entry.group.position);
       projectionVec.y += 1.4;
       projectionVec.project(cam);
@@ -326,9 +330,18 @@ export async function createThreeApp(host: HTMLDivElement): Promise<ThreeApp> {
           if (Math.sqrt(dx * dx + dz * dz) < 1.8) entry.carrying = true;
         }
       }
+      // Track idle transitions for the sub-3s grace window.
+      const wasIdle = entry.activity === 'idle';
+      const nowIdle = worker.activity === 'idle';
+      if (!wasIdle && nowIdle) entry.idleSince = performance.now();
+      else if (wasIdle && !nowIdle) entry.idleSince = null;
+      // Remember the worker's most recent real work site so sub-3s idle blips
+      // keep the worker heading toward where it was pulling from.
+      if (worker.activity === 'tool_use') entry.lastWorkTarget = 'patch';
+      else if (worker.activity === 'mcp_call') entry.lastWorkTarget = 'mcp';
       entry.activity = worker.activity;
       entry.basePosition = baseMeshes.get(worker.projectId)?.position ?? entry.basePosition;
-      applyStatusTint(entry);
+      applyStatusTint(entry, performance.now());
     }
     for (const [id, entry] of workerEntries) {
       if (!seenWorkers.has(id)) {
@@ -457,12 +470,18 @@ interface WorkerEntry {
   basePosition: THREE.Vector3 | undefined;
   patchPosition: THREE.Vector3;
   mcpTargetPosition: THREE.Vector3 | undefined;
-  /** Where this worker loiters when idle and not carrying — outside the base, deterministic. */
+  /** Where this worker loiters when sustained-idle — outside the base, deterministic. */
   idlePosition: THREE.Vector3;
+  /** performance.now() of the most recent transition into idle, or null if not idle. */
+  idleSince: number | null;
+  /** Last "real" work site the worker pulled from, used as the fallback target during sub-3s idle blips. */
+  lastWorkTarget: 'patch' | 'mcp';
   phase: number;
   usingTemplate: boolean;
   lastTintColor: number;
 }
+
+const SUSTAINED_IDLE_MS = 3000;
 
 function createWorkerEntry(
   workerId: string,
@@ -532,6 +551,8 @@ function createWorkerEntry(
     patchPosition: new THREE.Vector3(PATCH_RADIUS, 0, 0),
     mcpTargetPosition: undefined,
     idlePosition: new THREE.Vector3(seedPos.x, 0, seedPos.z),
+    idleSince: performance.now(),
+    lastWorkTarget: 'patch',
     phase: hashFloat(workerId),
     usingTemplate,
     lastTintColor: -1,
@@ -556,7 +577,7 @@ function stepWorker(entry: WorkerEntry, _dt: number, now: number): void {
   const frozen = typeof window !== 'undefined' && (window as Window & { __RTC_FREEZE_MOTION?: boolean }).__RTC_FREEZE_MOTION === true;
 
   if (!frozen) {
-    const target = pickTarget(entry);
+    const target = pickTarget(entry, now);
     _stepDir.copy(target).sub(entry.group.position);
     _stepDir.y = 0;
     const dist = _stepDir.length();
@@ -585,10 +606,19 @@ function stepWorker(entry: WorkerEntry, _dt: number, now: number): void {
   entry.group.scale.setScalar(entry.alive ? 1 : 0.6);
 }
 
-function pickTarget(entry: WorkerEntry): THREE.Vector3 {
+function pickTarget(entry: WorkerEntry, now: number): THREE.Vector3 {
   if (entry.carrying && entry.basePosition) return entry.basePosition;
   if (entry.activity === 'mcp_call' && entry.mcpTargetPosition) return entry.mcpTargetPosition;
-  if (entry.activity === 'idle') return entry.idlePosition;
+  if (entry.activity === 'idle') {
+    // Sustained idle (>= 3s): walk out to the loiter spot.
+    if (entry.idleSince !== null && now - entry.idleSince >= SUSTAINED_IDLE_MS) {
+      return entry.idlePosition;
+    }
+    // Sub-3s idle (between work cycles): keep heading toward the last work site
+    // so motion reads as continuous rather than flickering toward the loiter spot.
+    if (entry.lastWorkTarget === 'mcp' && entry.mcpTargetPosition) return entry.mcpTargetPosition;
+    return entry.patchPosition;
+  }
   return entry.patchPosition;
 }
 
@@ -596,15 +626,19 @@ const STATUS_GREEN = 0x34d399;
 const STATUS_YELLOW = 0xfbbf24;
 const STATUS_RED = 0xef4444;
 
-function statusColorFor(activity: WorkerEntry['activity'], alive: boolean, errorCount: number): number {
-  if (!alive) return STATUS_RED;
-  if (activity === 'tool_use' || activity === 'mcp_call') return STATUS_GREEN;
-  if (activity === 'thinking' || activity === 'streaming' || errorCount > 0) return STATUS_YELLOW;
-  return STATUS_RED;
+function statusColorFor(entry: WorkerEntry, now: number): number {
+  if (!entry.alive) return STATUS_RED;
+  const a = entry.activity;
+  if (a === 'tool_use' || a === 'mcp_call') return STATUS_GREEN;
+  if (a === 'thinking' || a === 'streaming' || entry.errorCount > 0) return STATUS_YELLOW;
+  // a === 'idle' — only show red after the sustained-idle threshold so brief
+  // between-task idle blips don't flicker the tint.
+  if (entry.idleSince !== null && now - entry.idleSince >= SUSTAINED_IDLE_MS) return STATUS_RED;
+  return STATUS_YELLOW;
 }
 
-function applyStatusTint(entry: WorkerEntry): void {
-  const color = statusColorFor(entry.activity, entry.alive, entry.errorCount);
+function applyStatusTint(entry: WorkerEntry, now: number): void {
+  const color = statusColorFor(entry, now);
   if (entry.lastTintColor === color) return;
   entry.lastTintColor = color;
   entry.body.traverse((child) => {
