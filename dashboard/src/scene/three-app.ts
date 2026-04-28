@@ -240,21 +240,26 @@ function hashFloat(s: string): number {
 
 function stepWorker(entry: WorkerEntry, _dt: number, now: number): void {
   const t = (now / 1000) + entry.phase * 4;
-  const target = pickTarget(entry, t);
-  const dir = target.clone().sub(entry.group.position);
-  dir.y = 0;
-  const dist = dir.length();
-  if (dist > 0.05) {
-    dir.normalize().multiplyScalar(0.018);
-    entry.group.position.add(dir);
-    entry.group.rotation.y = Math.atan2(dir.x, dir.z);
+  const testMode = typeof window !== 'undefined' && (window as Window & { __RTC_TEST_MODE?: boolean }).__RTC_TEST_MODE === true;
+
+  if (!testMode) {
+    const target = pickTarget(entry, t);
+    const dir = target.clone().sub(entry.group.position);
+    dir.y = 0;
+    const dist = dir.length();
+    if (dist > 0.05) {
+      dir.normalize().multiplyScalar(0.018);
+      entry.group.position.add(dir);
+      entry.group.rotation.y = Math.atan2(dir.x, dir.z);
+    }
+    entry.body.position.y = 0.5 + Math.sin(t * 6) * 0.04;
+  } else {
+    entry.body.position.y = 0.5;
   }
-  // Gentle bob for "alive" feel.
-  entry.body.position.y = 0.5 + Math.sin(t * 6) * 0.04;
   entry.group.scale.setScalar(entry.alive ? 1 : 0.6);
 
   const mat = entry.body.material as THREE.MeshStandardMaterial;
-  if (entry.activity === 'tool_use' || entry.activity === 'streaming') {
+  if (!testMode && (entry.activity === 'tool_use' || entry.activity === 'streaming')) {
     mat.emissiveIntensity = 0.6 + Math.sin(t * 8) * 0.2;
   } else {
     mat.emissiveIntensity = 0.35;

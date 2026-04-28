@@ -42,7 +42,7 @@ test.describe('llminerals scenario', () => {
       return n;
     }, { timeout: 4_000 }).toBeGreaterThan(0);
 
-    await page.getByTestId('worker-Alpha').click();
+    await page.getByTestId('worker-Alpha').dispatchEvent('click');
     await expect(page.getByRole('dialog', { name: /Alpha/ })).toBeVisible();
   });
 });

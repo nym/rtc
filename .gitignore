@@ -23,3 +23,9 @@ demos/tests/**
 
 # Local state during dev
 *.tmp
+
+# Source archives (delivery payload, not source)
+rtc-oneshot*.zip
+
+# Ralph loop session state lives in .claude
+.claude/ralph-loop*.md
