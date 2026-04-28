@@ -206,8 +206,12 @@ export async function createThreeApp(host: HTMLDivElement): Promise<ThreeApp> {
       }
       entry.label = worker.label ?? worker.id;
       entry.alive = worker.alive;
+      // Only flip to carrying if the worker actually made it to the patch during tool_use —
+      // otherwise the cycle ratchets them back to base before they ever leave.
       if (entry.activity === 'tool_use' && worker.activity !== 'tool_use' && worker.alive) {
-        entry.carrying = true;
+        const dx = entry.group.position.x - entry.patchPosition.x;
+        const dz = entry.group.position.z - entry.patchPosition.z;
+        if (Math.sqrt(dx * dx + dz * dz) < 1.5) entry.carrying = true;
       }
       entry.activity = worker.activity;
       entry.basePosition = baseMeshes.get(worker.projectId)?.position ?? entry.basePosition;

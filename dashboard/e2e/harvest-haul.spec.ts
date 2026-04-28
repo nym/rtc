@@ -15,24 +15,26 @@ test('worker hit-target flips data-carrying through a harvest cycle', async ({ p
     kind: 'worker.spawned', t: 1, eventId: 's',
     projectId: 'p1', workerId: 'w1', source: 'sdk-script', label: 'Hauler',
   });
+  const hit = page.getByTestId('worker-Hauler');
+  await expect(hit).toBeVisible();
+  await expect(hit).toHaveAttribute('data-carrying', 'false');
+
   await fake.ingest({
     kind: 'worker.activity', t: 2, eventId: 'a1',
     workerId: 'w1', activity: 'tool_use', detail: 'harvest_minerals',
   });
 
-  const hit = page.getByTestId('worker-Hauler');
-  await expect(hit).toBeVisible();
-  await expect(hit).toHaveAttribute('data-carrying', 'false');
+  // Allow the worker time to reach the patch (≈5.5 world units at 0.024/frame ≈ 4s).
+  await page.waitForTimeout(5_500);
 
-  // Trigger harvest completion.
+  // End harvest — the carry flag should flip because the worker is now at the patch.
   await fake.ingest({
     kind: 'worker.activity', t: 3, eventId: 'a2',
     workerId: 'w1', activity: 'idle',
   });
 
-  // Carry flag must turn on once the transition propagates through a render frame.
   await expect(hit).toHaveAttribute('data-carrying', 'true', { timeout: 2_000 });
 
-  // After walking home (≈3.5 world units at 0.018 units/frame ≈ 4s), carry releases.
+  // Worker walks back ≈5.5 units at 0.024/frame ≈ 4s; release on arrival.
   await expect(hit).toHaveAttribute('data-carrying', 'false', { timeout: 12_000 });
 });
