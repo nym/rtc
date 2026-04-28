@@ -603,8 +603,15 @@ function createWorkerEntry(
   );
   beam.visible = false;
 
-  const seedPos = placeOnGround(`worker:${workerId}`);
-  group.position.set(seedPos.x, 0, seedPos.z);
+  // Spawn the worker at the same base-relative loiter spot the idle logic
+  // uses, so workers always appear just outside their own base (rather than
+  // at some project-agnostic global ring position that could land inside
+  // another project's base).
+  const idleAngle = (hashInt(workerId) % 1024) / 1024 * Math.PI * 2;
+  const idleR = 3.4;
+  const spawnX = (base?.position.x ?? 0) + Math.cos(idleAngle) * idleR;
+  const spawnZ = (base?.position.z ?? 0) + Math.sin(idleAngle) * idleR;
+  group.position.set(spawnX, 0, spawnZ);
   return {
     workerId,
     label,
@@ -618,7 +625,7 @@ function createWorkerEntry(
     basePosition: base?.position,
     patchPosition: new THREE.Vector3(PATCH_RADIUS, 0, 0),
     mcpTargetPosition: undefined,
-    idlePosition: new THREE.Vector3(seedPos.x, 0, seedPos.z),
+    idlePosition: new THREE.Vector3(spawnX, 0, spawnZ),
     idleSince: performance.now(),
     lastWorkTarget: 'patch',
     phase: hashFloat(workerId),
