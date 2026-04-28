@@ -281,3 +281,82 @@ html, body, #root {
 .project-banner .swatch {
   width: 10px; height: 10px; border-radius: 50%;
 }
+
+/* --- Mobile layout (v1.6) ---
+ * At narrow viewports the HUD stacks vertically, stats stay readable (≥16px),
+ * hit-targets remain touch-friendly (≥32px), and the iso scene reflows. */
+@media (max-width: 600px) {
+  .top-bar {
+    grid-template-columns: 1fr auto;
+    grid-template-rows: auto auto;
+    padding: 10px 12px;
+    gap: 8px 10px;
+    row-gap: 6px;
+  }
+  .top-bar h1 {
+    font-size: 12px;
+    letter-spacing: 0.14em;
+    grid-column: 1 / 2;
+    grid-row: 1;
+  }
+  .top-bar .stats {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    gap: 14px;
+    flex-wrap: wrap;
+    justify-content: space-between;
+  }
+  .top-bar > div:last-child {
+    grid-column: 2 / 3;
+    grid-row: 1;
+    justify-self: end;
+  }
+  .stat-label {
+    font-size: 9px;
+    letter-spacing: 0.18em;
+  }
+  .stat-value {
+    font-size: 16px;
+  }
+  .connection-badge {
+    font-size: 10px;
+    padding: 4px 8px;
+    letter-spacing: 0.12em;
+  }
+  .project-banner {
+    bottom: 8px;
+    left: 8px;
+    right: 8px;
+  }
+  .project-banner .row {
+    font-size: 11px;
+    padding: 6px 10px;
+    letter-spacing: 0.1em;
+  }
+  .worker-hit-target {
+    width: 44px;
+    height: 56px;
+    font-size: 9px;
+  }
+  .popover {
+    width: calc(100vw - 24px);
+    max-width: 320px;
+    right: 12px;
+    left: auto;
+    top: auto;
+    bottom: 80px;
+  }
+  .toasts {
+    bottom: 8px;
+    right: 8px;
+    left: 8px;
+  }
+  .toast {
+    width: auto;
+    font-size: 11px;
+  }
+  .kill-confirm-card {
+    width: calc(100vw - 24px);
+    max-width: 360px;
+  }
+}

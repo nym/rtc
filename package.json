@@ -19,7 +19,8 @@
     "test:e2e": "playwright test --project=e2e --config dashboard/e2e/playwright.config.ts",
     "test:e2e:ui": "playwright test --project=e2e --ui --config dashboard/e2e/playwright.config.ts",
     "test:all": "pnpm test && pnpm test:e2e",
-    "demo:record": "playwright test --project=demo-recording --config dashboard/e2e/playwright.config.ts && tsx scripts/finalize-demo-video.ts",
+    "demo:record": "playwright test --project=demo-recording --config dashboard/e2e/playwright.config.ts && tsx scripts/finalize-demo-video.ts llminerals",
+    "demo:record:mobile": "playwright test --project=mobile-demo-recording --config dashboard/e2e/playwright.config.ts && tsx scripts/finalize-demo-video.ts mobile-llminerals",
     "demo:open": "open demos/llminerals.mp4 || xdg-open demos/llminerals.mp4"
   },
   "devDependencies": {

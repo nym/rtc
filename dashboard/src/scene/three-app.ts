@@ -88,8 +88,8 @@ export async function createThreeApp(host: HTMLDivElement): Promise<ThreeApp> {
   scene.background = new THREE.Color('#050a14');
   scene.fog = new THREE.Fog('#050a14', 28, 70);
 
-  const aspect = (host.clientWidth || 1) / (host.clientHeight || 1);
-  const cam = new THREE.OrthographicCamera(-14 * aspect, 14 * aspect, 14, -14, 0.1, 200);
+  const cam = new THREE.OrthographicCamera(-14, 14, 14, -14, 0.1, 200);
+  applyFrustum(cam, host.clientWidth || 1, host.clientHeight || 1);
   positionIsoCamera(cam, 36);
   cam.updateProjectionMatrix();
 
@@ -277,10 +277,7 @@ export async function createThreeApp(host: HTMLDivElement): Promise<ThreeApp> {
   }
 
   function resize(w: number, h: number) {
-    const a = w / h;
-    cam.left = -14 * a; cam.right = 14 * a;
-    cam.top = 14; cam.bottom = -14;
-    cam.updateProjectionMatrix();
+    applyFrustum(cam, w, h);
     renderer.setSize(w, h);
   }
 
@@ -290,6 +287,24 @@ export async function createThreeApp(host: HTMLDivElement): Promise<ThreeApp> {
     setOnFrame: (cb) => { onFrame = cb; },
     syncFromState,
   };
+}
+
+/** Clamp the orthographic frustum so the base + fanned patches fit on any aspect ratio. */
+function applyFrustum(cam: THREE.OrthographicCamera, w: number, h: number): void {
+  const targetExtent = 14;
+  const a = (w || 1) / (h || 1);
+  if (a >= 1) {
+    cam.left = -targetExtent * a;
+    cam.right = targetExtent * a;
+    cam.top = targetExtent;
+    cam.bottom = -targetExtent;
+  } else {
+    cam.left = -targetExtent;
+    cam.right = targetExtent;
+    cam.top = targetExtent / a;
+    cam.bottom = -targetExtent / a;
+  }
+  cam.updateProjectionMatrix();
 }
 
 function positionIsoCamera(cam: THREE.OrthographicCamera, distance: number): void {

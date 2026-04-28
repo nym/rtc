@@ -32,9 +32,23 @@ export default defineConfig({
     },
     {
       name: 'demo-recording',
-      testMatch: /llminerals\.demo\.ts/,
+      testMatch: /^(?!.*mobile-).*llminerals\.demo\.ts$/,
       timeout: 90_000,
       use: { ...devices['Desktop Chrome'] },
+    },
+    {
+      name: 'mobile-demo-recording',
+      testMatch: /mobile-llminerals\.demo\.ts/,
+      timeout: 90_000,
+      use: {
+        ...devices['Desktop Chrome'],
+        viewport: { width: 390, height: 844 },
+        deviceScaleFactor: 3,
+        isMobile: true,
+        hasTouch: true,
+        userAgent: devices['iPhone 14']?.userAgent,
+        video: { mode: 'on', size: { width: 390, height: 844 } },
+      },
     },
   ],
 

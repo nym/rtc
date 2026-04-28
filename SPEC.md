@@ -3,6 +3,7 @@
 > Status: **Locked. Gap-filled. Testable. Documented. Loop-verifiable.** Companion docs: `README.md` (user-authored, see Appendix F), `ASSETS.md` (artist-facing voxel modelling guide).
 
 ## Changelog
+- **v1.6** — Mobile/responsive layout promoted from non-goal to MVP. The HUD stacks below ≈600 px viewport width, stat values stay ≥ 16 px, hit-targets stay touch-sized (≥ 32×32 px), and the iso scene's camera frustum auto-clamps so the base + fanned patches always fit on portrait screens. New required E2E spec `mobile-layout.spec.ts` (added to Gate G6) asserts mobile readability invariants. New Gate G11 records a `demos/mobile-llminerals.{mp4,webm}` artifact on the same llminerals scenario but at iPhone 14 viewport.
 - **v1.5** — `ingest-sdk` and `ingest-claude-code` get integration suites that drive an ephemeral coordinator. The SDK's `instrument()` gains a `noLifecycleHandlers` opt-out so per-test runs don't leak `process.once('SIGTERM'|'exit')` listeners. Hook scripts are spawned as real `tsx` subprocesses with `RTC_PORT` injected via env, so the same code path used in production is exercised. Gate G3 minimum-case totals raised from 25 to 34.
 - **v1.4** — Patch placement constrained to the camera-facing 180° arc (angles in `[-π/4, 3π/4]` from base) so no patch sits behind the base out of view; patch radius increased to **5.5** world units. Worker visual switched to MagicaVoxel `MobileStorageBot.obj` (with `.mtl`/`.png` palette) loaded via `OBJLoader`/`MTLLoader` from `dashboard/public/assets/`; placeholder geometry is the fallback when the asset is missing. Project base composited as a multi-tier "space factory" (~3 × 3.5 × 3 world units) with glowing windows.
 - **v1.3** — Mineral-haul VFX promoted from roadmap to MVP. After a successful harvest cycle (worker `activity` transitions out of `tool_use`), the worker carries a glowing voxel back to its base; on arrival within ≈1 world unit the carry is released. Worker hit-targets expose `data-carrying="true|false"` for assertions. Gate G6 extended with required spec `harvest-haul.spec.ts`.
@@ -55,7 +56,7 @@ The aesthetic: **sci-fi command HUD via Arwes, framing a 3D voxel scene rendered
 - AI opponents, combat, win/lose conditions.
 - Buildings, production queues, tech tree (roadmap).
 - Fog of war (roadmap).
-- Mobile / responsive.
+- ~~Mobile / responsive.~~ *(promoted to goal in v1.6)*
 - Live token tracking *during* a Claude Code session.
 - Subprocess-level cancellation of workers sharing a PID.
 - SSR. Pure client app.
@@ -1979,6 +1980,7 @@ pnpm test:e2e
 | `reconnect.spec.ts` | Forced disconnect + reconnect resyncs from snapshot |
 | `mineral-patches.spec.ts` | N alive workers ↔ N `mineral-patch-{label}` hit-targets at distinct screen positions; on despawn, count decrements |
 | `harvest-haul.spec.ts` | Worker hit-target flips `data-carrying="true"` after `tool_use → idle` transition and back to `false` after returning to base |
+| `mobile-layout.spec.ts` | At a 390×844 viewport: same set of HUD `data-testid`s render as desktop, no horizontal page overflow, stat values render at ≥ 16 px, hit-targets stay ≥ 32×32 px, all worker + patch markers are inside the viewport bounds |
 
 Per-test webm videos exist under `demos/tests/` after this gate runs.
 
@@ -2035,6 +2037,24 @@ git check-ignore -q demos/tests/anything 2>/dev/null
 ```
 
 **Pass:** demo file is tracked AND `demos/tests/` is ignored. Both subcommands exit 0.
+
+#### Gate G11 — mobile demo recording
+
+```sh
+pnpm demo:record:mobile
+```
+
+**Pass:** exit 0 AND `demos/mobile-llminerals.mp4` OR `demos/mobile-llminerals.webm` exists AND:
+
+```sh
+file_path=$(ls -1 demos/mobile-llminerals.mp4 demos/mobile-llminerals.webm 2>/dev/null | head -n1)
+[ -n "$file_path" ] || exit 1
+size=$(wc -c < "$file_path")
+[ "$size" -gt 102400 ] || exit 1
+```
+
+The recording uses an iPhone 14 viewport (390 × 844) so reviewers can confirm
+the same Llminerals demo is intelligible on a phone screen.
 
 #### Gate G10 — clean-checkout smoke (capped at 2 attempts)
 
