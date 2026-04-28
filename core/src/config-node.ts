@@ -5,7 +5,7 @@ const env: Record<string, string | undefined> = process.env ?? {};
 
 export const STATE_DIR = env.RTC_STATE_DIR ?? path.join(os.homedir(), '.orchestrator-dashboard');
 export const EVENTS_JSONL = path.join(STATE_DIR, 'events.jsonl');
-export const TRANSCRIPT_MARKS = path.join(STATE_DIR, 'transcript-marks.json');
+export const TRANSCRIPT_MARKS_DIR = path.join(STATE_DIR, 'transcript-marks');
 
 export {
   COORDINATOR_PORT,

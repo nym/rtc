@@ -1,6 +1,7 @@
 import { aggregateByModel, totalsToUsd } from './transcript.js';
 import { makeEventId, postEvents } from './post.js';
 import { readStdinJson } from './read-stdin.js';
+import { readMarks, writeMarks, deltaTotals, isNonZero } from './transcript-marks.js';
 import type { DashboardEvent } from '@rtc/core';
 
 interface StopHook {
@@ -11,33 +12,34 @@ interface StopHook {
 async function main() {
   const hook = (await readStdinJson<StopHook>()) ?? {};
   const workerId = hook.session_id ?? `cc-${process.ppid}`;
-  const events: DashboardEvent[] = [];
 
-  if (hook.transcript_path) {
-    const byModel = await aggregateByModel(hook.transcript_path);
-    for (const totals of Object.values(byModel)) {
-      const usd = totalsToUsd(totals);
-      events.push({
-        kind: 'tokens.consumed',
-        t: Date.now(), eventId: makeEventId('tok'),
-        workerId,
-        model: totals.model ?? 'unknown',
-        inputTokens: totals.inputTokens,
-        outputTokens: totals.outputTokens,
-        ...(totals.cacheReadTokens ? { cacheReadTokens: totals.cacheReadTokens } : {}),
-        ...(totals.cacheWriteTokens ? { cacheWriteTokens: totals.cacheWriteTokens } : {}),
-        usd,
-      });
-    }
+  if (!hook.transcript_path) return;
+
+  const current = await aggregateByModel(hook.transcript_path);
+  const previous = readMarks(workerId);
+
+  const events: DashboardEvent[] = [];
+  for (const [model, currTotals] of Object.entries(current)) {
+    const delta = deltaTotals(currTotals, previous[model]);
+    if (!isNonZero(delta)) continue;
+    const usd = totalsToUsd(delta);
+    events.push({
+      kind: 'tokens.consumed',
+      t: Date.now(), eventId: makeEventId('tok'),
+      workerId,
+      model: delta.model ?? 'unknown',
+      inputTokens: delta.inputTokens,
+      outputTokens: delta.outputTokens,
+      ...(delta.cacheReadTokens ? { cacheReadTokens: delta.cacheReadTokens } : {}),
+      ...(delta.cacheWriteTokens ? { cacheWriteTokens: delta.cacheWriteTokens } : {}),
+      usd,
+    });
   }
 
-  events.push({
-    kind: 'worker.despawned',
-    t: Date.now(), eventId: makeEventId('despawn'),
-    workerId, reason: 'completed',
-  });
-
-  await postEvents(events);
+  if (events.length > 0) {
+    await postEvents(events);
+  }
+  writeMarks(workerId, current);
 }
 
 main().catch((err) => {

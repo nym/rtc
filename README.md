@@ -100,12 +100,9 @@ pnpm exec playwright install chromium
 
 ```bash
 # Terminal 1
-pnpm dev:coordinator
+pnpm dev
 
 # Terminal 2
-pnpm dev:dashboard
-
-# Terminal 3
 pnpm simulate:demo
 ```
 
@@ -127,17 +124,26 @@ Add to `~/.claude/settings.json` (or per-project `.claude/settings.json`):
     "PostToolUse":  [{ "hooks": [{ "type": "command",
       "command": "tsx /absolute/path/to/repo/ingest-claude-code/src/on-posttooluse.ts" }] }],
     "Stop":         [{ "hooks": [{ "type": "command",
-      "command": "tsx /absolute/path/to/repo/ingest-claude-code/src/on-stop.ts" }] }]
+      "command": "tsx /absolute/path/to/repo/ingest-claude-code/src/on-stop.ts" }] }],
+    "SessionEnd":   [{ "hooks": [{ "type": "command",
+      "command": "tsx /absolute/path/to/repo/ingest-claude-code/src/on-session-end.ts" }] }]
   }
 }
 ```
 
-Each Claude Code session you start now appears as a worker. Token totals are
-emitted on session end (when the `Stop` hook fires).
+Note: `tsx` is a project-local devDependency, not a global binary. The hook
+commands above assume `tsx` is on your `PATH`. Either install it globally
+(`npm i -g tsx`), or change each command to
+`pnpm --dir /absolute/path/to/repo exec tsx <script>`.
 
-> **Caveat:** dashboard shows `0 tokens` for a Claude Code worker until its
-> session completes. This is a known MVP limitation; live token streaming is
-> on the roadmap. See [`SPEC.md`](SPEC.md) §7.3.
+Each Claude Code session you start now appears as a worker. Tokens stream
+on every `Stop` hook (per turn) as a delta, with the worker despawning only
+when the session truly exits via `SessionEnd`.
+
+> **Composing with other hooks:** if you already have entries for these events
+> in `~/.claude/settings.json` (e.g. from ralph-loop or other tools), append
+> rtc's entries to the existing `hooks` array rather than overwriting it —
+> Claude Code runs all entries registered for an event.
 
 #### Option B — Instrumented SDK scripts
 
@@ -161,6 +167,20 @@ const reply = await client.messages.create({
 
 Lifecycle and per-call token usage stream to the coordinator immediately. The
 process responds to `SIGTERM` from the dashboard's Kill button cleanly.
+
+---
+
+## Using rtc with iterative loops
+
+rtc works cleanly alongside iterative Claude Code drivers — for instance the
+Ralph Wiggum technique / ralph-loop plugin, which keeps re-prompting a single
+session until a goal is met. Ralph-style loops fire the `Stop` hook many times
+per session (once per turn). rtc handles this correctly: each `Stop` emits the
+*delta* in token usage since the previous `Stop`, so the dashboard shows a
+steadily-growing harvest curve over the loop's lifetime instead of a single
+lump at the end. The worker stays alive on the map for the full duration of
+the loop and despawns only when the session actually exits, via the
+`SessionEnd` hook.
 
 ---
 
@@ -230,8 +250,10 @@ Check `~/.claude/settings.json` paths are absolute and the hook scripts are
 executable. Verify with `claude /hooks` from inside Claude Code.
 
 **Token total shows zero for Claude Code workers.**
-Tokens are aggregated and emitted on session end (Stop hook). MVP limitation;
-see roadmap in [`SPEC.md`](SPEC.md) §9.
+Tokens now stream on every `Stop` hook (i.e. once per turn) as a per-turn
+delta, so totals grow as the session progresses rather than landing in a
+single lump at the end. It's still batched at turn granularity, not truly
+real-time; see roadmap in [`SPEC.md`](SPEC.md) §9.
 
 **Killing one worker terminates several at once.**
 You're running multiple agents in one process; they share a PID. Run each
@@ -259,7 +281,8 @@ bottom voxels touch the very bottom of the editor volume. See
 **MVP**, version-tagged in releases. See [`SPEC.md`](SPEC.md) §8 for the
 definition of done and §9 for the roadmap. This is a personal dev tool, not
 production software — Arwes is on an alpha API, the kill executor only handles
-single-PID workers, and Claude Code token tracking is end-of-session only.
+single-PID workers, and Claude Code token tracking is per-turn rather than
+truly real-time.
 
 ## License
 
