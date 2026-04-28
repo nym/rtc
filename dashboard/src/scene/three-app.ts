@@ -41,6 +41,11 @@ const ZOOM_EXTENT_MIN = 4;
 const ZOOM_EXTENT_MAX = 30;
 const ZOOM_EXTENT_DEFAULT = 14;
 const ZOOM_STEP = 1.1;
+/** Minimum distance between two project bases. Wide enough that their patch
+ *  fans (radius 5.5) and MCP rings (radius 8.5) don't overlap visually. */
+const MIN_BASE_DISTANCE = 14;
+const WALK_BOB_AMPLITUDE = 0.08;
+const WALK_BOB_FREQ = 8; // rad/s
 const WORKER_OBJ_URL = '/assets/MobileStorageBot.obj';
 const WORKER_MTL_URL = '/assets/MobileStorageBot.mtl';
 
@@ -230,7 +235,7 @@ export async function createThreeApp(host: HTMLDivElement): Promise<ThreeApp> {
       if (!mesh) {
         const colorStr = project.color ?? fallbackColor(project.id);
         mesh = createSpaceFactory(colorStr);
-        const pos = placeOnGround(`base:${project.id}`);
+        const pos = placeBaseAvoidingOthers(project.id, baseMeshes);
         mesh.position.set(pos.x, 0, pos.z);
         baseGroup.add(mesh);
         baseMeshes.set(project.id, mesh);
@@ -581,13 +586,15 @@ function stepWorker(entry: WorkerEntry, _dt: number, now: number): void {
     _stepDir.copy(target).sub(entry.group.position);
     _stepDir.y = 0;
     const dist = _stepDir.length();
-    if (dist > 0.05) {
+    const moving = dist > 0.05;
+    if (moving) {
       _stepDir.normalize().multiplyScalar(0.024);
       entry.group.position.add(_stepDir);
       entry.group.rotation.y = Math.atan2(_stepDir.x, _stepDir.z);
-    }
-    if (!entry.usingTemplate && (entry.body as THREE.Mesh).position) {
-      (entry.body as THREE.Mesh).position.y = 0.5 + Math.sin(t * 6) * 0.04;
+      entry.group.position.y = Math.sin(t * WALK_BOB_FREQ) * WALK_BOB_AMPLITUDE;
+    } else if (entry.group.position.y !== 0) {
+      // Settle to the ground when not moving so idle workers don't levitate.
+      entry.group.position.y = 0;
     }
 
     if (entry.carrying && entry.basePosition) {
@@ -604,6 +611,44 @@ function stepWorker(entry: WorkerEntry, _dt: number, now: number): void {
   }
 
   entry.group.scale.setScalar(entry.alive ? 1 : 0.6);
+}
+
+/**
+ * Find a placement for a new base that respects MIN_BASE_DISTANCE. Starts at
+ * the deterministic seed from placeOnGround, then iteratively pushes away
+ * from any too-close existing base. Existing bases never move — only the
+ * newcomer relocates — so previously placed projects stay put.
+ */
+function placeBaseAvoidingOthers(
+  projectId: string,
+  existing: Map<string, THREE.Group>,
+): { x: number; z: number } {
+  const seed = placeOnGround(`base:${projectId}`);
+  let x = seed.x;
+  let z = seed.z;
+  for (let iter = 0; iter < 16; iter++) {
+    let moved = false;
+    for (const [otherId, otherMesh] of existing) {
+      if (otherId === projectId) continue;
+      const dx = x - otherMesh.position.x;
+      const dz = z - otherMesh.position.z;
+      const d = Math.sqrt(dx * dx + dz * dz);
+      if (d <= 0.001) {
+        // Coincident with another base; nudge to a deterministic side based on id.
+        const a = (hashInt(projectId) % 360) * Math.PI / 180;
+        x += Math.cos(a) * MIN_BASE_DISTANCE;
+        z += Math.sin(a) * MIN_BASE_DISTANCE;
+        moved = true;
+      } else if (d < MIN_BASE_DISTANCE) {
+        const push = MIN_BASE_DISTANCE - d;
+        x += (dx / d) * push;
+        z += (dz / d) * push;
+        moved = true;
+      }
+    }
+    if (!moved) break;
+  }
+  return { x, z };
 }
 
 function pickTarget(entry: WorkerEntry, now: number): THREE.Vector3 {
