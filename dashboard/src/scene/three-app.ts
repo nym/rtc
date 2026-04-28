@@ -50,6 +50,14 @@ const WALK_BOB_FREQ = 8; // rad/s
 /** How far short of the work-site the worker stops, so they don't visually
  *  clip into the patch / MCP server while harvesting. */
 const HARVEST_STOP_DISTANCE = 1.2;
+/** Distance from a project base at which a carrying worker stops to throw
+ *  its payload, well outside the 3.4-wide base footprint. */
+const DEPOSIT_STOP_DISTANCE_BASE = 2.5;
+/** Distance from a parent worker (subagent → parent deposit) — tighter since
+ *  a worker has a small footprint. */
+const DEPOSIT_STOP_DISTANCE_PARENT = 1.5;
+const THROW_DURATION_MS = 600;
+const THROW_ARC_HEIGHT = 1.6;
 const WORKER_OBJ_URL = '/assets/MobileStorageBot.obj';
 const WORKER_MTL_URL = '/assets/MobileStorageBot.mtl';
 
@@ -158,6 +166,8 @@ export async function createThreeApp(host: HTMLDivElement): Promise<ThreeApp> {
   scene.add(unitsGroup);
   const beamGroup = new THREE.Group();
   scene.add(beamGroup);
+  const throwGroup = new THREE.Group();
+  scene.add(throwGroup);
 
   const baseMeshes = new Map<string, THREE.Group>();
   const workerEntries = new Map<string, WorkerEntry>();
@@ -301,6 +311,7 @@ export async function createThreeApp(host: HTMLDivElement): Promise<ThreeApp> {
         entry = createWorkerEntry(worker.id, worker.label ?? worker.id, baseMeshes.get(worker.projectId));
         unitsGroup.add(entry.group);
         beamGroup.add(entry.beam);
+        throwGroup.add(entry.thrownCarry);
         workerEntries.set(worker.id, entry);
       }
       entry.label = worker.label ?? worker.id;
@@ -359,8 +370,17 @@ export async function createThreeApp(host: HTMLDivElement): Promise<ThreeApp> {
       if (!seenWorkers.has(id)) {
         unitsGroup.remove(entry.group);
         beamGroup.remove(entry.beam);
+        throwGroup.remove(entry.thrownCarry);
         workerEntries.delete(id);
       }
+    }
+    // Resolve subagent → parent links once all worker entries exist this pass.
+    for (const worker of Object.values(state.workers)) {
+      const entry = workerEntries.get(worker.id);
+      if (!entry) continue;
+      entry.parentEntry = worker.parentWorkerId
+        ? workerEntries.get(worker.parentWorkerId)
+        : undefined;
     }
 
     // Patches: 1:1 with alive workers per project, fanned across the project's arc.
@@ -500,6 +520,15 @@ interface WorkerEntry {
   errorLight: THREE.Mesh;
   /** Laser between the worker and its current work target, only visible while harvesting. */
   beam: THREE.Mesh;
+  /** Throw state for the deposit-at-base/parent animation. */
+  throwState: 'none' | 'throwing';
+  throwStart: number;
+  throwStartPos: THREE.Vector3;
+  throwEndPos: THREE.Vector3;
+  /** Scene-level voxel used for the parabolic throw arc — hidden by default. */
+  thrownCarry: THREE.Mesh;
+  /** If this worker is a subagent of another, the parent's WorkerEntry. Resolved in syncFromState. */
+  parentEntry: WorkerEntry | undefined;
 }
 
 const SUSTAINED_IDLE_MS = 3000;
@@ -603,10 +632,23 @@ function createWorkerEntry(
   );
   beam.visible = false;
 
+  // Scene-level "thrown" payload mesh — used for the deposit-arc animation.
+  // Identical look to the local carry voxel; lives in throwGroup so its world
+  // position is independent of the worker's local frame.
+  const thrownCarry = new THREE.Mesh(
+    new THREE.BoxGeometry(0.4, 0.4, 0.4),
+    new THREE.MeshStandardMaterial({
+      color: '#d1c4ff',
+      emissive: '#7e57c2',
+      emissiveIntensity: 1.6,
+      transparent: true,
+      opacity: 0.95,
+    }),
+  );
+  thrownCarry.visible = false;
+
   // Spawn the worker at the same base-relative loiter spot the idle logic
-  // uses, so workers always appear just outside their own base (rather than
-  // at some project-agnostic global ring position that could land inside
-  // another project's base).
+  // uses, so workers always appear just outside their own base.
   const idleAngle = (hashInt(workerId) % 1024) / 1024 * Math.PI * 2;
   const idleR = 3.4;
   const spawnX = (base?.position.x ?? 0) + Math.cos(idleAngle) * idleR;
@@ -635,6 +677,12 @@ function createWorkerEntry(
     statusRingMaterial,
     errorLight,
     beam,
+    throwState: 'none',
+    throwStart: 0,
+    throwStartPos: new THREE.Vector3(),
+    throwEndPos: new THREE.Vector3(),
+    thrownCarry,
+    parentEntry: undefined,
   };
 }
 
@@ -674,12 +722,41 @@ function stepWorker(entry: WorkerEntry, _dt: number, now: number): void {
     : Infinity;
   const atWorkSite = isHarvesting && distToHarvest <= HARVEST_STOP_DISTANCE;
 
+  // Determine whether the worker is at the deposit target with a payload to
+  // throw. depositTarget moves with the parent worker for subagents, so we
+  // re-read it each frame.
+  const depositTarget = entry.carrying ? depositTargetFor(entry) : undefined;
+  const distToDeposit = depositTarget
+    ? Math.hypot(entry.group.position.x - depositTarget.x, entry.group.position.z - depositTarget.z)
+    : Infinity;
+  const atDeposit = !!depositTarget && distToDeposit <= depositStopDistanceFor(entry);
+
+  // Kick off a throw when first reaching the deposit zone with a payload.
+  if (atDeposit && entry.throwState === 'none' && entry.alive) {
+    entry.throwState = 'throwing';
+    entry.throwStart = now;
+    entry.throwStartPos.set(
+      entry.group.position.x,
+      entry.group.position.y + 1.4,
+      entry.group.position.z,
+    );
+    // Aim slightly above the deposit target so the arc reads as "into" the
+    // structure rather than into the ground.
+    const targetY = entry.parentEntry ? 1.4 : 2.5;
+    entry.throwEndPos.set(depositTarget!.x, targetY, depositTarget!.z);
+    entry.thrownCarry.position.copy(entry.throwStartPos);
+    entry.thrownCarry.visible = true;
+  }
+
+  // Suppress walking whenever the worker is mid-throw or at the harvest site.
+  const stationary = atWorkSite || entry.throwState === 'throwing';
+
   if (!frozen) {
     const target = pickTarget(entry, now);
     _stepDir.copy(target).sub(entry.group.position);
     _stepDir.y = 0;
     const dist = _stepDir.length();
-    const moving = dist > 0.05 && !atWorkSite;
+    const moving = dist > 0.05 && !stationary;
     if (moving) {
       _stepDir.normalize().multiplyScalar(0.024);
       entry.group.position.add(_stepDir);
@@ -689,22 +766,38 @@ function stepWorker(entry: WorkerEntry, _dt: number, now: number): void {
       // Settle to the ground when not moving so idle workers don't levitate.
       entry.group.position.y = 0;
     }
-    // While stopped at the work site, keep the worker oriented toward the
-    // target so the beam reads as "aimed."
-    if (atWorkSite && harvestTarget) {
-      const fx = harvestTarget.x - entry.group.position.x;
-      const fz = harvestTarget.z - entry.group.position.z;
+    // While stopped at a work or deposit site, face the target so the beam /
+    // throw read as "aimed."
+    const facingTarget = atWorkSite ? harvestTarget : (entry.throwState === 'throwing' ? depositTarget : null);
+    if (facingTarget) {
+      const fx = facingTarget.x - entry.group.position.x;
+      const fz = facingTarget.z - entry.group.position.z;
       if (fx * fx + fz * fz > 1e-6) entry.group.rotation.y = Math.atan2(fx, fz);
-    }
-
-    if (entry.carrying && entry.basePosition) {
-      const dx = entry.group.position.x - entry.basePosition.x;
-      const dz = entry.group.position.z - entry.basePosition.z;
-      if (Math.sqrt(dx * dx + dz * dz) < 1.0) entry.carrying = false;
     }
   }
 
-  entry.carry.visible = entry.carrying && entry.alive;
+  // Animate the throw arc each frame; on landing, hide the thrown voxel and
+  // mark the carry as delivered.
+  if (entry.throwState === 'throwing') {
+    const p = Math.min(1, (now - entry.throwStart) / THROW_DURATION_MS);
+    const sx = entry.throwStartPos.x, sy = entry.throwStartPos.y, sz = entry.throwStartPos.z;
+    const ex = entry.throwEndPos.x,   ey = entry.throwEndPos.y,   ez = entry.throwEndPos.z;
+    entry.thrownCarry.position.set(
+      sx + (ex - sx) * p,
+      sy + (ey - sy) * p + Math.sin(Math.PI * p) * THROW_ARC_HEIGHT,
+      sz + (ez - sz) * p,
+    );
+    entry.thrownCarry.rotation.y = t * 4;
+    if (p >= 1) {
+      entry.thrownCarry.visible = false;
+      entry.throwState = 'none';
+      entry.carrying = false;
+    }
+  }
+
+  // Local-on-worker carry voxel: visible while traveling with payload, hidden
+  // during the throw arc (the scene-level thrownCarry takes over).
+  entry.carry.visible = entry.carrying && entry.alive && entry.throwState !== 'throwing';
   if (entry.carry.visible && !frozen) {
     entry.carry.position.y = 1.9 + Math.sin(t * 5) * 0.1;
     entry.carry.rotation.y = t * 1.5;
@@ -781,8 +874,22 @@ function placeBaseAvoidingOthers(
   return { x, z };
 }
 
+/** Where a carrying worker walks to deposit. Subagents deliver to their parent
+ *  worker's current position; everyone else delivers to their project base. */
+function depositTargetFor(entry: WorkerEntry): THREE.Vector3 | undefined {
+  if (entry.parentEntry) return entry.parentEntry.group.position;
+  return entry.basePosition;
+}
+
+function depositStopDistanceFor(entry: WorkerEntry): number {
+  return entry.parentEntry ? DEPOSIT_STOP_DISTANCE_PARENT : DEPOSIT_STOP_DISTANCE_BASE;
+}
+
 function pickTarget(entry: WorkerEntry, now: number): THREE.Vector3 {
-  if (entry.carrying && entry.basePosition) return entry.basePosition;
+  if (entry.carrying) {
+    const dep = depositTargetFor(entry);
+    if (dep) return dep;
+  }
   if (entry.activity === 'mcp_call' && entry.mcpTargetPosition) return entry.mcpTargetPosition;
   if (entry.activity === 'idle') {
     // Sustained idle (>= 3s): walk out to the loiter spot.
