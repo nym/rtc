@@ -90,6 +90,10 @@ importers:
       '@rtc/core':
         specifier: workspace:*
         version: link:../core
+    devDependencies:
+      '@rtc/coordinator':
+        specifier: workspace:*
+        version: link:../coordinator
 
   ingest-sdk:
     dependencies:
@@ -99,6 +103,10 @@ importers:
       '@rtc/core':
         specifier: workspace:*
         version: link:../core
+    devDependencies:
+      '@rtc/coordinator':
+        specifier: workspace:*
+        version: link:../coordinator
 
   simulate:
     dependencies:

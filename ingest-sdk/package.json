@@ -14,6 +14,9 @@
   "dependencies": {
     "@rtc/core": "workspace:*"
   },
+  "devDependencies": {
+    "@rtc/coordinator": "workspace:*"
+  },
   "peerDependencies": {
     "@anthropic-ai/sdk": "*"
   },

@@ -17,6 +17,12 @@ export interface InstrumentOpts {
   target?: string;
   /** Inject a clock for tests. */
   now?: () => number;
+  /**
+   * Skip the SIGTERM / process.exit listeners that emit worker.despawned.
+   * Default false (production). Tests should set true to avoid leaking listeners
+   * across test cases sharing the same Node process.
+   */
+  noLifecycleHandlers?: boolean;
 }
 
 interface MessagesUsage {
@@ -86,8 +92,10 @@ export function instrument<T extends AnthropicShape>(client: T, opts: Instrument
     void postEvent(ev, target);
   };
 
-  process.once('SIGTERM', () => despawn('killed'));
-  process.once('exit', () => despawn('completed'));
+  if (!opts.noLifecycleHandlers) {
+    process.once('SIGTERM', () => despawn('killed'));
+    process.once('exit', () => despawn('completed'));
+  }
 
   const originalCreate = client.messages.create.bind(client.messages);
   const wrappedCreate = async (...args: unknown[]): Promise<MessagesResponse> => {

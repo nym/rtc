@@ -14,5 +14,8 @@
   },
   "dependencies": {
     "@rtc/core": "workspace:*"
+  },
+  "devDependencies": {
+    "@rtc/coordinator": "workspace:*"
   }
 }

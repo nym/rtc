@@ -3,6 +3,7 @@
 > Status: **Locked. Gap-filled. Testable. Documented. Loop-verifiable.** Companion docs: `README.md` (user-authored, see Appendix F), `ASSETS.md` (artist-facing voxel modelling guide).
 
 ## Changelog
+- **v1.5** — `ingest-sdk` and `ingest-claude-code` get integration suites that drive an ephemeral coordinator. The SDK's `instrument()` gains a `noLifecycleHandlers` opt-out so per-test runs don't leak `process.once('SIGTERM'|'exit')` listeners. Hook scripts are spawned as real `tsx` subprocesses with `RTC_PORT` injected via env, so the same code path used in production is exercised. Gate G3 minimum-case totals raised from 25 to 34.
 - **v1.4** — Patch placement constrained to the camera-facing 180° arc (angles in `[-π/4, 3π/4]` from base) so no patch sits behind the base out of view; patch radius increased to **5.5** world units. Worker visual switched to MagicaVoxel `MobileStorageBot.obj` (with `.mtl`/`.png` palette) loaded via `OBJLoader`/`MTLLoader` from `dashboard/public/assets/`; placeholder geometry is the fallback when the asset is missing. Project base composited as a multi-tier "space factory" (~3 × 3.5 × 3 world units) with glowing windows.
 - **v1.3** — Mineral-haul VFX promoted from roadmap to MVP. After a successful harvest cycle (worker `activity` transitions out of `tool_use`), the worker carries a glowing voxel back to its base; on arrival within ≈1 world unit the carry is released. Worker hit-targets expose `data-carrying="true|false"` for assertions. Gate G6 extended with required spec `harvest-haul.spec.ts`.
 - **v1.2** — Mineral patches per worker. Each project's alive workers are paired 1:1 with mineral patches fanned in a uniform ring around the project base; worker `patchPosition` resolves to its assigned patch. Required `data-testid` `mineral-patch-{label}` added to D.11. Gate G6 extended with a new required spec `mineral-patches.spec.ts` asserting N alive workers ↔ N distinct patch positions.
@@ -1936,8 +1937,10 @@ pnpm test -- --reporter=verbose
 | pricing | `core/__tests__/pricing.test.ts` | ≥ 4 |
 | transcript parser | `ingest-claude-code/__tests__/transcript.test.ts` | ≥ 6 |
 | wire protocol | `coordinator/__tests__/wire.test.ts` | ≥ 5 |
+| ingest-sdk integration | `ingest-sdk/__tests__/integration.test.ts` | ≥ 4 |
+| ingest-claude-code hooks integration | `ingest-claude-code/__tests__/integration.test.ts` | ≥ 5 |
 
-**Total minimum: 25 vitest cases.** Anti-vacuous-test rule: each case must contain at least one `expect` and exercise distinct branches. Trivial duplicates count as one.
+**Total minimum: 34 vitest cases.** Anti-vacuous-test rule: each case must contain at least one `expect` and exercise distinct branches. Trivial duplicates count as one.
 
 #### Gate G4 — coordinator healthcheck
 
