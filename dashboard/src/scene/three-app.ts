@@ -41,11 +41,15 @@ const ZOOM_EXTENT_MIN = 4;
 const ZOOM_EXTENT_MAX = 30;
 const ZOOM_EXTENT_DEFAULT = 14;
 const ZOOM_STEP = 1.1;
-/** Minimum distance between two project bases. Wide enough that their patch
- *  fans (radius 5.5) and MCP rings (radius 8.5) don't overlap visually. */
-const MIN_BASE_DISTANCE = 14;
+/** Minimum distance between two project bases. Comfortable buffer so each
+ *  project's patch fan (radius 5.5) and MCP ring (radius 8.5) sit cleanly
+ *  apart with visual breathing room. */
+const MIN_BASE_DISTANCE = 28;
 const WALK_BOB_AMPLITUDE = 0.08;
 const WALK_BOB_FREQ = 8; // rad/s
+/** How far short of the work-site the worker stops, so they don't visually
+ *  clip into the patch / MCP server while harvesting. */
+const HARVEST_STOP_DISTANCE = 1.2;
 const WORKER_OBJ_URL = '/assets/MobileStorageBot.obj';
 const WORKER_MTL_URL = '/assets/MobileStorageBot.mtl';
 
@@ -152,6 +156,8 @@ export async function createThreeApp(host: HTMLDivElement): Promise<ThreeApp> {
   scene.add(mcpGroup);
   const unitsGroup = new THREE.Group();
   scene.add(unitsGroup);
+  const beamGroup = new THREE.Group();
+  scene.add(beamGroup);
 
   const baseMeshes = new Map<string, THREE.Group>();
   const workerEntries = new Map<string, WorkerEntry>();
@@ -294,6 +300,7 @@ export async function createThreeApp(host: HTMLDivElement): Promise<ThreeApp> {
       if (!entry) {
         entry = createWorkerEntry(worker.id, worker.label ?? worker.id, baseMeshes.get(worker.projectId));
         unitsGroup.add(entry.group);
+        beamGroup.add(entry.beam);
         workerEntries.set(worker.id, entry);
       }
       entry.label = worker.label ?? worker.id;
@@ -351,6 +358,7 @@ export async function createThreeApp(host: HTMLDivElement): Promise<ThreeApp> {
     for (const [id, entry] of workerEntries) {
       if (!seenWorkers.has(id)) {
         unitsGroup.remove(entry.group);
+        beamGroup.remove(entry.beam);
         workerEntries.delete(id);
       }
     }
@@ -484,6 +492,14 @@ interface WorkerEntry {
   phase: number;
   usingTemplate: boolean;
   lastTintColor: number;
+  /** Glowing status ring at the worker's feet (green/yellow/red). */
+  statusRing: THREE.Mesh;
+  /** Material reference for the ring so applyStatusTint can recolor it cheaply. */
+  statusRingMaterial: THREE.MeshBasicMaterial;
+  /** Blinking red orb above the worker; visible only when errorCount > 0. */
+  errorLight: THREE.Mesh;
+  /** Laser between the worker and its current work target, only visible while harvesting. */
+  beam: THREE.Mesh;
 }
 
 const SUSTAINED_IDLE_MS = 3000;
@@ -540,6 +556,53 @@ function createWorkerEntry(
   carry.visible = false;
   group.add(carry);
 
+  // Glowing status ring at feet — primary at-a-glance status signal.
+  const statusRingMaterial = new THREE.MeshBasicMaterial({
+    color: 0xfbbf24,
+    transparent: true,
+    opacity: 0.85,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+  });
+  const statusRing = new THREE.Mesh(
+    new THREE.RingGeometry(0.55, 0.85, 32),
+    statusRingMaterial,
+  );
+  statusRing.rotation.x = -Math.PI / 2;
+  statusRing.position.y = 0.04;
+  group.add(statusRing);
+
+  // Blinking red error indicator above the worker.
+  const errorLight = new THREE.Mesh(
+    new THREE.SphereGeometry(0.14, 12, 8),
+    new THREE.MeshBasicMaterial({
+      color: 0xef4444,
+      transparent: true,
+      opacity: 0.95,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+    }),
+  );
+  errorLight.position.y = 2.4;
+  errorLight.visible = false;
+  group.add(errorLight);
+
+  // Laser beam mesh — one per worker, parented to scene-level beamGroup later.
+  // Cylinder with origin at one end so we can scale-y to reach a target.
+  const beamGeo = new THREE.CylinderGeometry(0.04, 0.04, 1, 8, 1, true);
+  beamGeo.translate(0, 0.5, 0);
+  const beam = new THREE.Mesh(
+    beamGeo,
+    new THREE.MeshBasicMaterial({
+      color: 0xff4d6d,
+      transparent: true,
+      opacity: 0.9,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+    }),
+  );
+  beam.visible = false;
+
   const seedPos = placeOnGround(`worker:${workerId}`);
   group.position.set(seedPos.x, 0, seedPos.z);
   return {
@@ -561,6 +624,10 @@ function createWorkerEntry(
     phase: hashFloat(workerId),
     usingTemplate,
     lastTintColor: -1,
+    statusRing,
+    statusRingMaterial,
+    errorLight,
+    beam,
   };
 }
 
@@ -577,16 +644,35 @@ function hashFloat(s: string): number {
 }
 
 const _stepDir = new THREE.Vector3();
+const _beamUp = new THREE.Vector3(0, 1, 0);
+const _beamDir = new THREE.Vector3();
 function stepWorker(entry: WorkerEntry, _dt: number, now: number): void {
   const t = (now / 1000) + entry.phase * 4;
   const frozen = typeof window !== 'undefined' && (window as Window & { __RTC_FREEZE_MOTION?: boolean }).__RTC_FREEZE_MOTION === true;
+
+  // Determine whether the worker is harvesting at a work site this frame —
+  // i.e. its activity is an active extract pose AND it's at the corresponding
+  // target without the carry already in hand. Used to drive both the
+  // stop-short-of-target behavior and the laser beam.
+  const isHarvesting = entry.alive && !entry.carrying && (
+    (entry.activity === 'tool_use') ||
+    (entry.activity === 'mcp_call' && !!entry.mcpTargetPosition)
+  );
+  const harvestTarget: THREE.Vector3 | null =
+    entry.activity === 'tool_use' ? entry.patchPosition
+    : entry.activity === 'mcp_call' ? (entry.mcpTargetPosition ?? null)
+    : null;
+  const distToHarvest = harvestTarget
+    ? Math.hypot(entry.group.position.x - harvestTarget.x, entry.group.position.z - harvestTarget.z)
+    : Infinity;
+  const atWorkSite = isHarvesting && distToHarvest <= HARVEST_STOP_DISTANCE;
 
   if (!frozen) {
     const target = pickTarget(entry, now);
     _stepDir.copy(target).sub(entry.group.position);
     _stepDir.y = 0;
     const dist = _stepDir.length();
-    const moving = dist > 0.05;
+    const moving = dist > 0.05 && !atWorkSite;
     if (moving) {
       _stepDir.normalize().multiplyScalar(0.024);
       entry.group.position.add(_stepDir);
@@ -595,6 +681,13 @@ function stepWorker(entry: WorkerEntry, _dt: number, now: number): void {
     } else if (entry.group.position.y !== 0) {
       // Settle to the ground when not moving so idle workers don't levitate.
       entry.group.position.y = 0;
+    }
+    // While stopped at the work site, keep the worker oriented toward the
+    // target so the beam reads as "aimed."
+    if (atWorkSite && harvestTarget) {
+      const fx = harvestTarget.x - entry.group.position.x;
+      const fz = harvestTarget.z - entry.group.position.z;
+      if (fx * fx + fz * fz > 1e-6) entry.group.rotation.y = Math.atan2(fx, fz);
     }
 
     if (entry.carrying && entry.basePosition) {
@@ -608,6 +701,36 @@ function stepWorker(entry: WorkerEntry, _dt: number, now: number): void {
   if (entry.carry.visible && !frozen) {
     entry.carry.position.y = 1.9 + Math.sin(t * 5) * 0.1;
     entry.carry.rotation.y = t * 1.5;
+  }
+
+  // Beam: from worker chest to harvest target, only while at the work site.
+  if (atWorkSite && harvestTarget && entry.alive) {
+    const sourceY = 1.4;
+    const targetY = harvestTarget === entry.patchPosition ? 0.6 : 1.9;
+    _beamDir.set(
+      harvestTarget.x - entry.group.position.x,
+      targetY - sourceY,
+      harvestTarget.z - entry.group.position.z,
+    );
+    const len = _beamDir.length();
+    entry.beam.position.set(entry.group.position.x, entry.group.position.y + sourceY, entry.group.position.z);
+    entry.beam.scale.set(1, len, 1);
+    _beamDir.normalize();
+    entry.beam.quaternion.setFromUnitVectors(_beamUp, _beamDir);
+    entry.beam.visible = true;
+  } else {
+    entry.beam.visible = false;
+  }
+
+  // Status ring: subtle radial pulse so the glow reads as "alive."
+  const ringPulse = 1 + Math.sin(t * 3) * 0.08;
+  entry.statusRing.scale.set(ringPulse, 1, ringPulse);
+
+  // Error indicator: blink while errorCount > 0 and worker alive.
+  if (entry.errorCount > 0 && entry.alive) {
+    entry.errorLight.visible = Math.sin(now / 1000 * 6) > 0;
+  } else {
+    entry.errorLight.visible = false;
   }
 
   entry.group.scale.setScalar(entry.alive ? 1 : 0.6);
@@ -686,6 +809,7 @@ function applyStatusTint(entry: WorkerEntry, now: number): void {
   const color = statusColorFor(entry, now);
   if (entry.lastTintColor === color) return;
   entry.lastTintColor = color;
+  entry.statusRingMaterial.color.setHex(color);
   entry.body.traverse((child) => {
     const mesh = child as THREE.Mesh;
     if (!mesh.isMesh) return;
