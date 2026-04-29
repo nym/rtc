@@ -28,11 +28,21 @@ export function reduce(state: WorldState, event: DashboardEvent): WorldState {
     case 'project.upserted': {
       const existing = state.projects[event.project.id];
       const project = existing
-        ? { ...existing, ...event.project }
-        : { ...event.project, createdAt: event.t };
+        ? { ...existing, ...event.project, lastSeen: event.t }
+        : { ...event.project, createdAt: event.t, lastSeen: event.t };
       return {
         ...state,
         projects: { ...state.projects, [event.project.id]: project },
+        revision: state.revision + 1,
+      };
+    }
+
+    case 'project.removed': {
+      if (!state.projects[event.projectId]) return state;
+      const { [event.projectId]: _gone, ...rest } = state.projects;
+      return {
+        ...state,
+        projects: rest,
         revision: state.revision + 1,
       };
     }

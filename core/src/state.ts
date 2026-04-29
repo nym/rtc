@@ -7,6 +7,7 @@ export interface Project {
   color?: string;
   patchArcCenter?: number;
   createdAt: number;
+  lastSeen: number;
 }
 
 export interface McpServer {

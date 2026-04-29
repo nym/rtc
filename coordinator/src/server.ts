@@ -162,6 +162,21 @@ export async function startCoordinator(opts: CoordinatorOpts = {}): Promise<Coor
         });
       }
     }
+    // Project sweep: remove projects with no workers referencing them once
+    // their lastSeen is past the TTL. Active sessions keep the project alive
+    // implicitly via their workers; once those are all gone (after their own
+    // despawn + fade), the project follows.
+    const referencedProjectIds = new Set<string>();
+    for (const w of Object.values(state.workers)) referencedProjectIds.add(w.projectId);
+    for (const p of Object.values(state.projects)) {
+      if (referencedProjectIds.has(p.id)) continue;
+      if (t - p.lastSeen <= staleTtlMs) continue;
+      toEmit.push({
+        kind: 'project.removed',
+        t, eventId: `sweep-proj-${p.id}-${++sweepCounter}`,
+        projectId: p.id,
+      });
+    }
     for (const e of toEmit) await ingest(e);
   }
 

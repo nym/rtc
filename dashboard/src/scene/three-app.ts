@@ -156,6 +156,10 @@ export async function createThreeApp(host: HTMLDivElement): Promise<ThreeApp> {
   grid.position.y = 0.01;
   scene.add(grid);
 
+  // Markers go below patches in the scene graph so they render under the
+  // patch voxels (same y-plane, marker is flatter).
+  const markerGroup = new THREE.Group();
+  scene.add(markerGroup);
   const patchGroup = new THREE.Group();
   scene.add(patchGroup);
   const baseGroup = new THREE.Group();
@@ -173,6 +177,10 @@ export async function createThreeApp(host: HTMLDivElement): Promise<ThreeApp> {
   const workerEntries = new Map<string, WorkerEntry>();
   const patchMeshes = new Map<string, { mesh: THREE.Mesh; label: string }>();
   const mcpMeshes = new Map<string, { mesh: THREE.Group; position: THREE.Vector3; label: string }>();
+  /** Persistent ground markers — created on first patch sighting per worker,
+   *  positioned wherever that worker's patch currently is, frozen when the
+   *  worker leaves state, removed only when the project itself is removed. */
+  const groundMarkers = new Map<string, { mesh: THREE.Mesh; projectId: string }>();
 
   const projectionVec = new THREE.Vector3();
   let onFrame: ((snap: FrameSnapshot) => void) | null = null;
@@ -261,6 +269,14 @@ export async function createThreeApp(host: HTMLDivElement): Promise<ThreeApp> {
       if (!seenProjects.has(id)) {
         baseGroup.remove(mesh);
         baseMeshes.delete(id);
+      }
+    }
+    // Clean up ground markers belonging to removed projects. Markers persist
+    // for the lifetime of the project, not the worker that created them.
+    for (const [markerKey, m] of groundMarkers) {
+      if (!seenProjects.has(m.projectId)) {
+        markerGroup.remove(m.mesh);
+        groundMarkers.delete(markerKey);
       }
     }
 
@@ -421,6 +437,19 @@ export async function createThreeApp(host: HTMLDivElement): Promise<ThreeApp> {
         entry.mesh.position.set(px, 0.3, pz);
         const we = workerEntries.get(wid);
         if (we) we.patchPosition.set(px, 0, pz);
+
+        // Persistent ground marker — keyed by workerId, scoped to project.
+        // Created on first sighting; position tracks the patch while the
+        // worker is alive; frozen when the worker leaves state.workers;
+        // removed only when the project itself disappears.
+        let marker = groundMarkers.get(wid);
+        if (!marker) {
+          const markerMesh = createGroundMarker();
+          markerGroup.add(markerMesh);
+          marker = { mesh: markerMesh, projectId };
+          groundMarkers.set(wid, marker);
+        }
+        marker.mesh.position.set(px, 0.02, pz);
       }
     }
     for (const [wid, entry] of patchMeshes) {
@@ -938,6 +967,21 @@ function setEmissive(material: THREE.Material, color: number): void {
   if (!m.emissive) return;
   m.emissive.setHex(color);
   m.emissiveIntensity = 0.55;
+}
+
+function createGroundMarker(): THREE.Mesh {
+  const mat = new THREE.MeshStandardMaterial({
+    color: '#3a2563',
+    roughness: 0.9,
+    metalness: 0.0,
+    emissive: '#1c0f3a',
+    emissiveIntensity: 0.3,
+  });
+  // Slightly larger than the patch footprint (0.9) so the patch sits
+  // visibly on top of it.
+  const mesh = new THREE.Mesh(new THREE.CircleGeometry(0.85, 24), mat);
+  mesh.rotation.x = -Math.PI / 2;
+  return mesh;
 }
 
 function createMcpServer(): THREE.Group {

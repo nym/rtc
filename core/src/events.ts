@@ -29,6 +29,7 @@ export interface McpServerInfo {
 
 export type DashboardEvent =
   | (EventBase & { kind: 'project.upserted'; project: ProjectInfo })
+  | (EventBase & { kind: 'project.removed'; projectId: string })
   | (EventBase & {
       kind: 'worker.spawned';
       projectId: string;
