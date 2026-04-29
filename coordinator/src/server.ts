@@ -137,16 +137,21 @@ export async function startCoordinator(opts: CoordinatorOpts = {}): Promise<Coor
   let sweepCounter = 0;
   async function sweepStale(): Promise<void> {
     const t = now();
-    const toEmit: DashboardEvent[] = [];
+    // Two-stage sweep: workers + MCP servers first, then projects. Projects
+    // are removed only when no workers reference them, but a worker queued for
+    // removal in this sweep would still appear as a reference if both stages
+    // ran off the same pre-sweep snapshot — projects would lag one cycle
+    // behind. Applying stage 1 before computing stage 2 fixes that.
+    const stage1: DashboardEvent[] = [];
     for (const w of Object.values(state.workers)) {
       if (w.alive && t - w.lastEventAt > staleTtlMs) {
-        toEmit.push({
+        stage1.push({
           kind: 'worker.despawned',
           t, eventId: `sweep-despawn-${w.id}-${++sweepCounter}`,
           workerId: w.id, reason: 'unresponsive',
         });
       } else if (!w.alive && w.despawnedAt !== undefined && t - w.despawnedAt > fadeMs) {
-        toEmit.push({
+        stage1.push({
           kind: 'worker.removed',
           t, eventId: `sweep-remove-${w.id}-${++sweepCounter}`,
           workerId: w.id,
@@ -155,29 +160,30 @@ export async function startCoordinator(opts: CoordinatorOpts = {}): Promise<Coor
     }
     for (const s of Object.values(state.mcpServers)) {
       if (t - s.lastSeen > staleTtlMs) {
-        toEmit.push({
+        stage1.push({
           kind: 'mcp.server.removed',
           t, eventId: `sweep-mcp-${s.id}-${++sweepCounter}`,
           serverId: s.id,
         });
       }
     }
-    // Project sweep: remove projects with no workers referencing them once
-    // their lastSeen is past the TTL. Active sessions keep the project alive
-    // implicitly via their workers; once those are all gone (after their own
-    // despawn + fade), the project follows.
+    for (const e of stage1) await ingest(e);
+
+    // Stage 2: now state.workers reflects the removals from stage 1, so the
+    // project reference check is accurate.
+    const stage2: DashboardEvent[] = [];
     const referencedProjectIds = new Set<string>();
     for (const w of Object.values(state.workers)) referencedProjectIds.add(w.projectId);
     for (const p of Object.values(state.projects)) {
       if (referencedProjectIds.has(p.id)) continue;
       if (t - p.lastSeen <= staleTtlMs) continue;
-      toEmit.push({
+      stage2.push({
         kind: 'project.removed',
         t, eventId: `sweep-proj-${p.id}-${++sweepCounter}`,
         projectId: p.id,
       });
     }
-    for (const e of toEmit) await ingest(e);
+    for (const e of stage2) await ingest(e);
   }
 
   let sweepTimer: ReturnType<typeof setInterval> | null = null;
