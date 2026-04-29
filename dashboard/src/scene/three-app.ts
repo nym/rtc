@@ -1,6 +1,5 @@
 import * as THREE from 'three';
-import { OBJLoader } from 'three/examples/jsm/loaders/OBJLoader.js';
-import { MTLLoader } from 'three/examples/jsm/loaders/MTLLoader.js';
+import { VOXLoader, VOXMesh } from 'three/examples/jsm/loaders/VOXLoader.js';
 import { ISO_CAMERA_ANGLE, placeOnGround, projectColor as fallbackColor, type WorldState } from '@rtc/core';
 
 export interface WorkerProjection {
@@ -58,8 +57,7 @@ const DEPOSIT_STOP_DISTANCE_BASE = 2.5;
 const DEPOSIT_STOP_DISTANCE_PARENT = 1.5;
 const THROW_DURATION_MS = 600;
 const THROW_ARC_HEIGHT = 1.6;
-const WORKER_OBJ_URL = '/assets/MobileStorageBot.obj';
-const WORKER_MTL_URL = '/assets/MobileStorageBot.mtl';
+const WORKER_VOX_URL = '/assets/MechaTrooper.vox';
 
 let workerTemplate: THREE.Object3D | null = null;
 let workerTemplateLoading: Promise<THREE.Object3D | null> | null = null;
@@ -69,35 +67,41 @@ async function loadWorkerTemplate(): Promise<THREE.Object3D | null> {
   if (workerTemplateLoading) return workerTemplateLoading;
   workerTemplateLoading = (async () => {
     try {
-      const objHead = await fetch(WORKER_OBJ_URL, { method: 'HEAD' });
-      if (!objHead.ok) return null;
-      const objLoader = new OBJLoader();
-      try {
-        const mtlHead = await fetch(WORKER_MTL_URL, { method: 'HEAD' });
-        if (mtlHead.ok) {
-          const mtl = await new MTLLoader().loadAsync(WORKER_MTL_URL);
-          mtl.preload();
-          objLoader.setMaterials(mtl);
-        }
-      } catch {
-        /* MTL is optional */
+      const head = await fetch(WORKER_VOX_URL, { method: 'HEAD' });
+      if (!head.ok) return null;
+      const loader = new VOXLoader();
+      // VOXLoader has no loadAsync helper; wrap the callback API.
+      const chunks = await new Promise<unknown[]>((resolve, reject) => {
+        loader.load(
+          WORKER_VOX_URL,
+          (parsed) => resolve(parsed as unknown[]),
+          undefined,
+          (err) => reject(err),
+        );
+      });
+      // A .vox file can contain multiple chunks (separate models in one
+      // file); combine all chunks into one Group as the worker template.
+      const group = new THREE.Group();
+      for (const chunk of chunks) {
+        const mesh = new VOXMesh(chunk as ConstructorParameters<typeof VOXMesh>[0]);
+        group.add(mesh);
       }
-      const obj = await objLoader.loadAsync(WORKER_OBJ_URL);
-      // MagicaVoxel exports center the model in its volume; bottom may sit below y=0.
-      // Recenter so the lowest voxel touches y=0.
-      obj.updateMatrixWorld();
-      const bbox = new THREE.Box3().setFromObject(obj);
-      const sizeY = bbox.max.y - bbox.min.y;
-      const target = 1.4; // world units tall, comparable to placeholder
-      const scale = target / Math.max(sizeY, 0.001);
-      obj.scale.setScalar(scale);
-      obj.updateMatrixWorld();
-      const scaled = new THREE.Box3().setFromObject(obj);
-      obj.position.y -= scaled.min.y;
-      obj.position.x -= (scaled.min.x + scaled.max.x) / 2;
-      obj.position.z -= (scaled.min.z + scaled.max.z) / 2;
-      workerTemplate = obj;
-      return obj;
+      // MagicaVoxel models are centered in their volume; bottom may sit
+      // below y=0 and the model may not be on the x/z origin. Recenter so
+      // the lowest voxel touches y=0 and the model is centered horizontally.
+      group.updateMatrixWorld();
+      const bbox = new THREE.Box3().setFromObject(group);
+      const sizeY = Math.max(bbox.max.y - bbox.min.y, 0.001);
+      const target = 1.4; // worker height in world units
+      const scale = target / sizeY;
+      group.scale.setScalar(scale);
+      group.updateMatrixWorld();
+      const scaled = new THREE.Box3().setFromObject(group);
+      group.position.y -= scaled.min.y;
+      group.position.x -= (scaled.min.x + scaled.max.x) / 2;
+      group.position.z -= (scaled.min.z + scaled.max.z) / 2;
+      workerTemplate = group;
+      return group;
     } catch {
       return null;
     }

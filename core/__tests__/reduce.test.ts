@@ -303,4 +303,40 @@ describe('reduce', () => {
     expect(s1).toBe(s0);
     expect(s1.revision).toBe(s0.revision);
   });
+
+  test('project.upserted on a new project sets lastSeen and createdAt to event.t', () => {
+    let s = initialWorldState();
+    s = reduce(s, projectUpserted('p1', 42));
+    const p = s.projects['p1'];
+    expect(p?.lastSeen).toBe(42);
+    expect(p?.createdAt).toBe(42);
+    expect(p?.createdAt).toBe(p?.lastSeen);
+  });
+
+  test('project.upserted on an existing project bumps lastSeen but preserves createdAt', () => {
+    let s = initialWorldState();
+    s = reduce(s, projectUpserted('p1', 100));
+    expect(s.projects['p1']?.createdAt).toBe(100);
+    expect(s.projects['p1']?.lastSeen).toBe(100);
+    s = reduce(s, projectUpserted('p1', 500));
+    expect(s.projects['p1']?.createdAt).toBe(100);
+    expect(s.projects['p1']?.lastSeen).toBe(500);
+  });
+
+  test('project.removed deletes the project from state and bumps revision', () => {
+    let s = initialWorldState();
+    s = reduce(s, projectUpserted('p1', 1));
+    expect(s.projects['p1']).toBeDefined();
+    const revBefore = s.revision;
+    s = reduce(s, { kind: 'project.removed', t: 50, eventId: 'p-rm', projectId: 'p1' });
+    expect(s.projects['p1']).toBeUndefined();
+    expect(s.revision).toBe(revBefore + 1);
+  });
+
+  test('project.removed for an unknown projectId is a no-op', () => {
+    const s0 = initialWorldState();
+    const s1 = reduce(s0, { kind: 'project.removed', t: 1, eventId: 'p-rm-noop', projectId: 'unknown' });
+    expect(s1).toBe(s0);
+    expect(s1.revision).toBe(s0.revision);
+  });
 });

@@ -150,4 +150,62 @@ describe('coordinator stale sweeper', () => {
 
     expect(handle.state().revision).toBe(revBefore);
   });
+
+  test('sweeps a project with no workers and stale lastSeen', async () => {
+    const handle = await startEphemeral(1000);
+    await handle.ingestEvent(projectUpserted('p1', 1000));
+    expect(handle.state().projects['p1']).toBeDefined();
+
+    fakeNow = 1000 + STALE_TTL_MS + 1;
+    await handle.sweepStale();
+
+    expect(handle.state().projects['p1']).toBeUndefined();
+  });
+
+  test('does NOT sweep a project that has workers', async () => {
+    const handle = await startEphemeral(1000);
+    await handle.ingestEvent(projectUpserted('p1', 1000));
+    await handle.ingestEvent(workerSpawned('w1', 1000));
+
+    // Advance far past STALE_TTL_MS — far enough that the worker would also age
+    // out into despawned, but not far enough for it to be removed entirely.
+    fakeNow = 1000 + STALE_TTL_MS + 100;
+    await handle.sweepStale();
+
+    // Worker may now be alive=false, but it still references the project,
+    // so the project must be preserved.
+    expect(handle.state().workers['w1']).toBeDefined();
+    expect(handle.state().projects['p1']).toBeDefined();
+  });
+
+  test('does NOT sweep a freshly-upserted project', async () => {
+    const handle = await startEphemeral(1000);
+    await handle.ingestEvent(projectUpserted('p1', 1000));
+
+    fakeNow = 2000; // well within STALE_TTL_MS
+    await handle.sweepStale();
+
+    expect(handle.state().projects['p1']).toBeDefined();
+  });
+
+  test('cascading flow: workers age out, then project follows', async () => {
+    const handle = await startEphemeral(1000);
+    await handle.ingestEvent(projectUpserted('p1', 1000));
+    await handle.ingestEvent(workerSpawned('w1', 1000));
+
+    // First sweep: past STALE_TTL_MS — worker flips to alive=false, but still
+    // exists in state.workers, so it pins the project.
+    fakeNow = 1000 + STALE_TTL_MS + 1;
+    await handle.sweepStale();
+    expect(handle.state().workers['w1']?.alive).toBe(false);
+    expect(handle.state().projects['p1']).toBeDefined();
+
+    // Second sweep: past FADE_MS after the despawn — worker is removed
+    // entirely, freeing the project. Since the project's lastSeen is now
+    // even older than STALE_TTL_MS, the same sweep removes it too.
+    fakeNow = (1000 + STALE_TTL_MS + 1) + FADE_MS + 1;
+    await handle.sweepStale();
+    expect(handle.state().workers['w1']).toBeUndefined();
+    expect(handle.state().projects['p1']).toBeUndefined();
+  });
 });
