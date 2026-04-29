@@ -33,5 +33,9 @@ test('worker hit-target screen position changes during a harvest cycle', async (
   const min = Math.min(...samples);
   const max = Math.max(...samples);
   // Worker walks toward patch on tool_use; expect noticeable horizontal drift.
-  expect(max - min).toBeGreaterThan(8);
+  // Threshold is conservative because the worker spawns at the base-adjacent
+  // loiter spot and stops short of the patch (HARVEST_STOP_DISTANCE), so the
+  // trajectory is shorter than it was when the worker spawned at a random
+  // global ring position and walked all the way onto the patch.
+  expect(max - min).toBeGreaterThan(3);
 });

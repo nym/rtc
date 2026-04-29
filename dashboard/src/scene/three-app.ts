@@ -81,9 +81,15 @@ async function loadWorkerTemplate(): Promise<THREE.Object3D | null> {
       });
       // A .vox file can contain multiple chunks (separate models in one
       // file); combine all chunks into one Group as the worker template.
+      // VOXMesh isn't safely cloneable — its constructor expects a `chunk`
+      // arg and Object3D.clone() does `new this.constructor()` with no
+      // args, which throws on `chunk.data`. Wrap each as a plain Mesh
+      // reusing the VOXMesh's geometry + material so the template can be
+      // deep-cloned per worker via the standard path.
       const group = new THREE.Group();
       for (const chunk of chunks) {
-        const mesh = new VOXMesh(chunk as ConstructorParameters<typeof VOXMesh>[0]);
+        const vm = new VOXMesh(chunk as ConstructorParameters<typeof VOXMesh>[0]);
+        const mesh = new THREE.Mesh(vm.geometry, vm.material);
         group.add(mesh);
       }
       // MagicaVoxel models are centered in their volume; bottom may sit
