@@ -1,6 +1,7 @@
 import { makeEventId, postEvents } from './post.js';
 import { readStdinJson } from './read-stdin.js';
 import { deleteMarks } from './transcript-marks.js';
+import { clearBootstrap } from './bootstrap.js';
 import type { DashboardEvent } from '@rtc/core';
 
 interface SessionEndHook {
@@ -21,6 +22,7 @@ async function main() {
 
   await postEvents([event]);
   deleteMarks(workerId);
+  clearBootstrap(workerId);
 }
 
 main().catch((err) => {

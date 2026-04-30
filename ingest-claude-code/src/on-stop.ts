@@ -2,16 +2,19 @@ import { aggregateByModel, lastInputTokens, totalsToUsd } from './transcript.js'
 import { makeEventId, postEvents } from './post.js';
 import { readStdinJson } from './read-stdin.js';
 import { readMarks, writeMarks, deltaTotals, isNonZero } from './transcript-marks.js';
+import { ensureBootstrapped } from './bootstrap.js';
 import type { DashboardEvent } from '@rtc/core';
 
 interface StopHook {
   session_id?: string;
   transcript_path?: string;
+  cwd?: string;
 }
 
 async function main() {
   const hook = (await readStdinJson<StopHook>()) ?? {};
   const workerId = hook.session_id ?? `cc-${process.ppid}`;
+  await ensureBootstrapped({ workerId, cwd: hook.cwd });
 
   if (!hook.transcript_path) return;
 

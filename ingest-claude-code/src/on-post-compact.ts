@@ -2,16 +2,19 @@ import { aggregateByModel } from './transcript.js';
 import { makeEventId, postEvents } from './post.js';
 import { readStdinJson } from './read-stdin.js';
 import { writeMarks } from './transcript-marks.js';
+import { ensureBootstrapped } from './bootstrap.js';
 import type { DashboardEvent } from '@rtc/core';
 
 interface PostCompactHook {
   session_id?: string;
   transcript_path?: string;
+  cwd?: string;
 }
 
 async function main() {
   const hook = (await readStdinJson<PostCompactHook>()) ?? {};
   const workerId = hook.session_id ?? `cc-${process.ppid}`;
+  await ensureBootstrapped({ workerId, cwd: hook.cwd });
 
   // Reset the on-stop delta baseline to whatever the post-compact transcript
   // contains right now. Without this, future Stop events would compute

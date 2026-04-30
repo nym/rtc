@@ -1,11 +1,13 @@
 import { makeEventId, postEvents } from './post.js';
 import { readStdinJson } from './read-stdin.js';
+import { ensureBootstrapped } from './bootstrap.js';
 import type { DashboardEvent, NotificationLevel } from '@rtc/core';
 
 interface NotificationHook {
   session_id?: string;
   notification_type?: string;
   notification_content?: string;
+  cwd?: string;
 }
 
 const levelFor = (type?: string): NotificationLevel => {
@@ -19,6 +21,7 @@ const levelFor = (type?: string): NotificationLevel => {
 async function main() {
   const hook = (await readStdinJson<NotificationHook>()) ?? {};
   const workerId = hook.session_id ?? `cc-${process.ppid}`;
+  await ensureBootstrapped({ workerId, cwd: hook.cwd });
 
   const event: DashboardEvent = {
     kind: 'worker.notification',

@@ -16,20 +16,32 @@ interface RunResult { exitCode: number; stderr: string; }
 
 let stateDir: string;
 
-const runHook = (script: string, payload: unknown, port: number): Promise<RunResult> =>
+interface RunHookOpts {
+  /** When true, omit ORCHESTRATOR_PROJECT_ID so the hook derives the project id from cwd. */
+  unsetProjectId?: boolean;
+}
+
+const runHook = (
+  script: string,
+  payload: unknown,
+  port: number,
+  opts: RunHookOpts = {},
+): Promise<RunResult> =>
   new Promise((resolve, reject) => {
+    const baseEnv = {
+      ...process.env,
+      RTC_PORT: String(port),
+      RTC_HOST: '127.0.0.1',
+      // Avoid interference: hooks fall back to basename($PWD) for projectId
+      // when no env override and no .orchestrator.json — fix it explicitly.
+      ORCHESTRATOR_PROJECT_ID: 'test-project',
+      // Per-test isolated state dir so transcript-marks files don't pollute
+      // the developer's ~/.orchestrator-dashboard.
+      RTC_STATE_DIR: stateDir,
+    } as NodeJS.ProcessEnv;
+    if (opts.unsetProjectId) delete baseEnv.ORCHESTRATOR_PROJECT_ID;
     const child = spawn(TSX_BIN, [path.join(HOOKS_DIR, script)], {
-      env: {
-        ...process.env,
-        RTC_PORT: String(port),
-        RTC_HOST: '127.0.0.1',
-        // Avoid interference: hooks fall back to basename($PWD) for projectId
-        // when no env override and no .orchestrator.json — fix it explicitly.
-        ORCHESTRATOR_PROJECT_ID: 'test-project',
-        // Per-test isolated state dir so transcript-marks files don't pollute
-        // the developer's ~/.orchestrator-dashboard.
-        RTC_STATE_DIR: stateDir,
-      },
+      env: baseEnv,
       stdio: ['pipe', 'pipe', 'pipe'],
     });
     let stderr = '';
@@ -445,5 +457,117 @@ describe('ingest-claude-code new hooks (subagents, notifications, compaction, fa
     }, handle.port);
     expect(result.exitCode).toBe(0);
     expect(Object.keys(handle.state().mcpServers)).toHaveLength(0);
+  });
+});
+
+describe('bootstrap (lazy worker spawn)', () => {
+  const markerFile = (workerId: string): string =>
+    path.join(stateDir, 'worker-bootstrap', `${workerId}.json`);
+
+  test('on-pretooluse on an unbootstrapped session creates the worker', async () => {
+    const sessionId = 'fresh-1';
+    const result = await runHook('on-pretooluse.ts', {
+      session_id: sessionId, tool_name: 'Bash', cwd: '/tmp/fresh-project',
+    }, handle.port, { unsetProjectId: true });
+    expect(result.exitCode).toBe(0);
+
+    const state = handle.state();
+    const w = state.workers[sessionId];
+    expect(w).toBeDefined();
+    expect(w?.alive).toBe(true);
+    expect(w?.source).toBe('claude-code');
+    // Project derived from cwd basename.
+    expect(state.projects['fresh-project']).toBeDefined();
+    // Marker should now exist.
+    expect(fs.existsSync(markerFile(sessionId))).toBe(true);
+  });
+
+  test('on-pretooluse a SECOND time does not double-spawn', async () => {
+    const sessionId = 'fresh-2';
+
+    // First call bootstraps and writes the marker.
+    const r1 = await runHook('on-pretooluse.ts', {
+      session_id: sessionId, tool_name: 'Bash', cwd: '/tmp/fresh-project',
+    }, handle.port);
+    expect(r1.exitCode).toBe(0);
+    expect(fs.existsSync(markerFile(sessionId))).toBe(true);
+    const totalsAfterFirst = handle.state().totals.workersTotal;
+    expect(totalsAfterFirst).toBe(1);
+
+    // Second call — marker exists, ensureBootstrapped is a no-op, no extra spawn.
+    const r2 = await runHook('on-pretooluse.ts', {
+      session_id: sessionId, tool_name: 'Bash', cwd: '/tmp/fresh-project',
+    }, handle.port);
+    expect(r2.exitCode).toBe(0);
+    expect(handle.state().totals.workersTotal).toBe(totalsAfterFirst);
+  });
+
+  test('on-stop on an unbootstrapped session creates the worker before ingesting tokens', async () => {
+    const sessionId = 'fresh-3';
+    const result = await runHook('on-stop.ts', {
+      session_id: sessionId,
+      transcript_path: path.join(FIXTURES, 'simple.jsonl'),
+      cwd: '/tmp/x',
+    }, handle.port);
+    expect(result.exitCode).toBe(0);
+
+    const state = handle.state();
+    const w = state.workers[sessionId];
+    expect(w).toBeDefined();
+    expect(w?.alive).toBe(true);
+    expect(w?.inputTokens).toBe(300);
+    // A project was upserted (env override fixes id to 'test-project').
+    expect(state.projects['test-project']).toBeDefined();
+    expect(fs.existsSync(markerFile(sessionId))).toBe(true);
+  });
+
+  test('on-pretooluse with agent_id bootstraps the subagent with parentWorkerId', async () => {
+    const result = await runHook('on-pretooluse.ts', {
+      session_id: 'parent-A', agent_id: 'sub-B', tool_name: 'Bash', cwd: '/tmp/x',
+    }, handle.port);
+    expect(result.exitCode).toBe(0);
+
+    const state = handle.state();
+    const sub = state.workers['sub-B'];
+    expect(sub).toBeDefined();
+    expect(sub?.parentWorkerId).toBe('parent-A');
+    expect(sub?.alive).toBe(true);
+    // Only the directly-observed worker (the subagent) is bootstrapped — the
+    // parent is a documented limitation.
+    expect(fs.existsSync(markerFile('sub-B'))).toBe(true);
+  });
+
+  test('on-session-start writes the marker, so subsequent on-pretooluse skips bootstrapping', async () => {
+    const sessionId = 'sess-X';
+
+    const r1 = await runHook('on-session-start.ts', {
+      session_id: sessionId, cwd: '/tmp/x',
+    }, handle.port);
+    expect(r1.exitCode).toBe(0);
+    expect(fs.existsSync(markerFile(sessionId))).toBe(true);
+    expect(handle.state().totals.workersTotal).toBe(1);
+
+    const r2 = await runHook('on-pretooluse.ts', {
+      session_id: sessionId, tool_name: 'Bash', cwd: '/tmp/x',
+    }, handle.port);
+    expect(r2.exitCode).toBe(0);
+    // Bootstrap was skipped — no duplicate spawn.
+    expect(handle.state().totals.workersTotal).toBe(1);
+  });
+
+  test('on-session-end clears the bootstrap marker', async () => {
+    const sessionId = 'sess-clear-1';
+
+    const r1 = await runHook('on-session-start.ts', {
+      session_id: sessionId, cwd: '/tmp/x',
+    }, handle.port);
+    expect(r1.exitCode).toBe(0);
+    expect(fs.existsSync(markerFile(sessionId))).toBe(true);
+
+    const r2 = await runHook('on-session-end.ts', {
+      session_id: sessionId, reason: 'logout',
+    }, handle.port);
+    expect(r2.exitCode).toBe(0);
+    expect(fs.existsSync(markerFile(sessionId))).toBe(false);
   });
 });

@@ -1,6 +1,7 @@
 import { resolveProjectIdentity, hostname } from './identity.js';
 import { makeEventId, postEvents } from './post.js';
 import { readStdinJson } from './read-stdin.js';
+import { markBootstrapped } from './bootstrap.js';
 import type { DashboardEvent } from '@rtc/core';
 
 interface SubagentStartHook {
@@ -38,6 +39,7 @@ async function main() {
   ];
 
   await postEvents(events);
+  markBootstrapped(workerId);
 }
 
 main().catch((err) => {

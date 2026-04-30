@@ -1,12 +1,18 @@
 import { makeEventId, postEvents } from './post.js';
 import { readStdinJson } from './read-stdin.js';
+import { ensureBootstrapped } from './bootstrap.js';
 import type { DashboardEvent } from '@rtc/core';
 
-interface PostToolUseHook { session_id?: string; agent_id?: string; }
+interface PostToolUseHook { session_id?: string; agent_id?: string; cwd?: string; }
 
 async function main() {
   const hook = (await readStdinJson<PostToolUseHook>()) ?? {};
   const workerId = hook.agent_id ?? hook.session_id ?? `cc-${process.ppid}`;
+  await ensureBootstrapped({
+    workerId,
+    cwd: hook.cwd,
+    ...(hook.agent_id && hook.session_id ? { parentWorkerId: hook.session_id } : {}),
+  });
   const event: DashboardEvent = {
     kind: 'worker.activity',
     t: Date.now(), eventId: makeEventId('act'),

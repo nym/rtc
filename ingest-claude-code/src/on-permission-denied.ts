@@ -3,35 +3,35 @@ import { readStdinJson } from './read-stdin.js';
 import { ensureBootstrapped } from './bootstrap.js';
 import type { DashboardEvent } from '@rtc/core';
 
-interface PostToolUseFailureHook {
+interface PermissionDeniedHook {
   session_id?: string;
   agent_id?: string;
   tool_name?: string;
-  tool_error?: string;
   cwd?: string;
 }
 
 async function main() {
-  const hook = (await readStdinJson<PostToolUseFailureHook>()) ?? {};
+  const hook = (await readStdinJson<PermissionDeniedHook>()) ?? {};
   const workerId = hook.agent_id ?? hook.session_id ?? `cc-${process.ppid}`;
   await ensureBootstrapped({
     workerId,
     cwd: hook.cwd,
     ...(hook.agent_id && hook.session_id ? { parentWorkerId: hook.session_id } : {}),
   });
-  const message = hook.tool_error ?? `tool error${hook.tool_name ? ` in ${hook.tool_name}` : ''}`;
+  const tool = hook.tool_name ?? 'unknown';
 
   const event: DashboardEvent = {
-    kind: 'worker.errored',
-    t: Date.now(), eventId: makeEventId('err'),
+    kind: 'worker.notification',
+    t: Date.now(), eventId: makeEventId('perm-denied'),
     workerId,
-    message,
-    recoverable: true,
+    level: 'warn',
+    message: `permission denied: ${tool}`,
+    source: 'permission_denied',
   };
   await postEvents([event]);
 }
 
 main().catch((err) => {
   // eslint-disable-next-line no-console
-  console.error('[rtc] on-posttooluse-failure error:', err);
+  console.error('[rtc] on-permission-denied error:', err);
 });

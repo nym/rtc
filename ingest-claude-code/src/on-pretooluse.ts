@@ -1,6 +1,7 @@
 import { resolveProjectIdentity } from './identity.js';
 import { makeEventId, postEvents } from './post.js';
 import { readStdinJson } from './read-stdin.js';
+import { ensureBootstrapped } from './bootstrap.js';
 import type { DashboardEvent } from '@rtc/core';
 
 interface PreToolUseHook {
@@ -23,6 +24,11 @@ async function main() {
   // When inside a subagent call, agent_id identifies the subagent worker;
   // otherwise the parent session is the worker.
   const workerId = hook.agent_id ?? hook.session_id ?? `cc-${process.ppid}`;
+  await ensureBootstrapped({
+    workerId,
+    cwd: hook.cwd,
+    ...(hook.agent_id && hook.session_id ? { parentWorkerId: hook.session_id } : {}),
+  });
   const mcpServer = mcpServerOf(hook.tool_name);
 
   const events: DashboardEvent[] = [{

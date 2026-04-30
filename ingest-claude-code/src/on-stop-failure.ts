@@ -1,15 +1,18 @@
 import { makeEventId, postEvents } from './post.js';
 import { readStdinJson } from './read-stdin.js';
+import { ensureBootstrapped } from './bootstrap.js';
 import type { DashboardEvent } from '@rtc/core';
 
 interface StopFailureHook {
   session_id?: string;
   error_type?: string;
+  cwd?: string;
 }
 
 async function main() {
   const hook = (await readStdinJson<StopFailureHook>()) ?? {};
   const workerId = hook.session_id ?? `cc-${process.ppid}`;
+  await ensureBootstrapped({ workerId, cwd: hook.cwd });
 
   const event: DashboardEvent = {
     kind: 'worker.errored',
