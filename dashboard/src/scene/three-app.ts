@@ -57,6 +57,12 @@ const DEPOSIT_STOP_DISTANCE_BASE = 2.5;
 const DEPOSIT_STOP_DISTANCE_PARENT = 1.5;
 const THROW_DURATION_MS = 600;
 const THROW_ARC_HEIGHT = 1.6;
+/** A worker's mineral patch sticks around this long after the worker's last
+ *  event before it despawns (in wall-clock ms). Lets a worker go dark, get
+ *  swept to alive=false, etc., without instantly losing the visual harvest
+ *  zone. Ground markers already persist for project lifetime; this aligns
+ *  the patch voxel's TTL with that intent. */
+const PATCH_ACTIVITY_TTL_MS = 5 * 60 * 1000;
 const WORKER_VOX_URL = '/assets/MechaTrooper.vox';
 
 let workerTemplate: THREE.Object3D | null = null;
@@ -224,6 +230,7 @@ export async function createThreeApp(host: HTMLDivElement): Promise<ThreeApp> {
       }
     }
 
+    const wallClock = Date.now();
     const workers: WorkerProjection[] = [];
     for (const entry of workerEntries.values()) {
       stepWorker(entry, dt, now);
@@ -231,6 +238,14 @@ export async function createThreeApp(host: HTMLDivElement): Promise<ThreeApp> {
       // red precisely when sustained idle is reached, not only on the next
       // state change. applyStatusTint short-circuits if the color is unchanged.
       applyStatusTint(entry, now);
+      // Toggle this worker's patch visibility against the activity TTL each
+      // frame, so a patch fades out without needing a state event to tick
+      // syncFromState. Alive workers always show their patch; dead workers
+      // keep theirs until 5 min past their last event.
+      const patch = patchMeshes.get(entry.workerId);
+      if (patch) {
+        patch.mesh.visible = entry.alive || (wallClock - entry.lastEventAt <= PATCH_ACTIVITY_TTL_MS);
+      }
       projectionVec.copy(entry.group.position);
       projectionVec.y += 1.4;
       projectionVec.project(cam);
@@ -248,6 +263,7 @@ export async function createThreeApp(host: HTMLDivElement): Promise<ThreeApp> {
 
     const patches: PatchProjection[] = [];
     for (const [workerId, entry] of patchMeshes) {
+      if (!entry.mesh.visible) continue;
       projectionVec.copy(entry.mesh.position);
       projectionVec.y += 0.4;
       projectionVec.project(cam);
@@ -343,6 +359,7 @@ export async function createThreeApp(host: HTMLDivElement): Promise<ThreeApp> {
       entry.label = worker.label ?? worker.id;
       entry.alive = worker.alive;
       entry.errorCount = worker.errorCount;
+      entry.lastEventAt = worker.lastEventAt;
       // Resolve which MCP server (if any) this worker targets when in mcp_call.
       // Pick deterministically by hashing workerId across the project's servers so
       // multi-server projects spread traffic visibly.
@@ -409,16 +426,22 @@ export async function createThreeApp(host: HTMLDivElement): Promise<ThreeApp> {
         : undefined;
     }
 
-    // Patches: 1:1 with alive workers per project, fanned across the project's arc.
-    const aliveByProject = new Map<string, string[]>();
+    // Patches: alive workers always get one; dead workers keep theirs for
+    // PATCH_ACTIVITY_TTL_MS after their last event so a worker that goes
+    // silent or gets swept to alive=false doesn't instantly lose the
+    // associated harvest-zone visual. The animate loop also toggles
+    // visibility on this same TTL so patches fade without needing a state
+    // change to re-run syncFromState.
+    const recentByProject = new Map<string, string[]>();
+    const nowWallClock = Date.now();
     for (const w of Object.values(state.workers)) {
-      if (!w.alive) continue;
-      const list = aliveByProject.get(w.projectId) ?? [];
+      if (!w.alive && nowWallClock - w.lastEventAt > PATCH_ACTIVITY_TTL_MS) continue;
+      const list = recentByProject.get(w.projectId) ?? [];
       list.push(w.id);
-      aliveByProject.set(w.projectId, list);
+      recentByProject.set(w.projectId, list);
     }
     const seenPatches = new Set<string>();
-    for (const [projectId, ids] of aliveByProject) {
+    for (const [projectId, ids] of recentByProject) {
       ids.sort();
       const base = baseMeshes.get(projectId);
       if (!base) continue;
@@ -559,6 +582,10 @@ interface WorkerEntry {
   errorLight: THREE.Mesh;
   /** Laser between the worker and its current work target, only visible while harvesting. */
   beam: THREE.Mesh;
+  /** Wall-clock time of the worker's last event, mirrored from state.
+   *  Used by the animate loop to toggle patch visibility based on the 5m
+   *  activity TTL without waiting for the next state change. */
+  lastEventAt: number;
   /** Throw state for the deposit-at-base/parent animation. */
   throwState: 'none' | 'throwing';
   throwStart: number;
@@ -716,6 +743,7 @@ function createWorkerEntry(
     statusRingMaterial,
     errorLight,
     beam,
+    lastEventAt: Date.now(),
     throwState: 'none',
     throwStart: 0,
     throwStartPos: new THREE.Vector3(),
